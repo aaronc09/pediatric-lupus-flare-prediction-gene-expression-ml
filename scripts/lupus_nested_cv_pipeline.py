@@ -151,7 +151,7 @@ TOP_K             = 20
 TOP_K_CORRECT_OOF = 10
 
 N_TRIALS_LR  = 40
-N_TRIALS_XGB = 80
+N_TRIALS_XGB = 150
 
 XGB_NJOBS = 1
 XGB_TREE  = "hist"
@@ -326,16 +326,16 @@ def get_search_space_tables():
             "reg_lambda", "reg_alpha", "max_delta_step",
         ],
         "Search space": [
-            "int, [10, 100], step=10",
+            "int, [10, 60], step=10",
             "int, [200, 1500], step=50",
-            "int, [2, 4]",
+            "int, [2, 3]",
             "float, log scale, [0.01, 0.20]",
-            "float, [0.6, 1.0]",
-            "float, [0.5, 1.0]",
-            "float, [10.0, 30.0]",
-            "float, [0.0, 5.0]",
-            "float, log scale, [1.0, 100.0]",
-            "float, log scale, [1e-6, 10.0]",
+            "float, [0.6, 0.8]",
+            "float, [0.5, 0.8]",
+            "float, [20.0, 40.0]",
+            "float, [1.0, 5.0]",
+            "float, log scale, [10.0, 200.0]",
+            "float, log scale, [1e-3, 10.0]",
             "int, [0, 8]",
         ]
     })
@@ -874,7 +874,6 @@ def tune_xgb_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=No
     if fold_cache is None:
         fold_cache = build_inner_fold_cache(X_train, y_train, g_train, seed)
 
-    # MedianPruner for XGB only — LR trials are fast enough that pruning overhead isn't justified
     study = optuna.create_study(
         direction="maximize",
         sampler=TPESampler(seed=seed),
@@ -885,14 +884,14 @@ def tune_xgb_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=No
         p = {
             "xgb_sel_topk":     trial.suggest_int("xgb_sel_topk", 10, 60, step=10),
             "n_estimators":     trial.suggest_int("n_estimators", 200, 1500, step=50),
-            "max_depth":        trial.suggest_int("max_depth", 2, 4),
+            "max_depth":        trial.suggest_int("max_depth", 2, 3),
             "learning_rate":    trial.suggest_float("learning_rate", 0.01, 0.20, log=True),
-            "subsample":        trial.suggest_float("subsample", 0.6, 1.0),
-            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
-            "min_child_weight": trial.suggest_float("min_child_weight", 10.0, 30.0),
-            "gamma":            trial.suggest_float("gamma", 0.0, 5.0),
-            "reg_lambda":       trial.suggest_float("reg_lambda", 1.0, 100.0, log=True),
-            "reg_alpha":        trial.suggest_float("reg_alpha", 1e-6, 10.0, log=True),
+            "subsample":        trial.suggest_float("subsample", 0.6, 0.8),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 0.8),
+            "min_child_weight": trial.suggest_float("min_child_weight", 20.0, 40.0),
+            "gamma":            trial.suggest_float("gamma", 1.0, 5.0),
+            "reg_lambda":       trial.suggest_float("reg_lambda", 10.0, 200.0, log=True),
+            "reg_alpha":        trial.suggest_float("reg_alpha", 1e-3, 10.0, log=True),
             "max_delta_step":   trial.suggest_int("max_delta_step", 0, 8),
         }
         oof_probs, oof_pr, contributed = cv_oof_probs_pr_auc_from_cache(
@@ -2608,7 +2607,6 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
         outer_cv, X, y, groups, outer_is_stratified, dirs["logs"],
     )
 
-    # Preserve original sample identifiers (e.g. GSM IDs) in fold assignment exports.
     fold_assignment_rows = []
     test_assignment_rows = []
     for outer_idx, (tr_idx, te_idx) in enumerate(fold_indices, start=1):
