@@ -1,4 +1,4 @@
-# Title: Pediatric Lupus Flare Prediction using Gene Expression and Machine Learning
+# Pediatric Lupus Flare Prediction using Gene Expression and Machine Learning
 Predicting pre-flare states in pediatric SLE patients using whole-blood gene expression data (GSE65391) and machine learning models with SHAP-based interpretation.
 
 ## Overview
