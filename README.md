@@ -6,9 +6,6 @@ Systemic lupus erythematosus (SLE) is a chronic autoimmune disease characterized
 This project develops a machine learning pipeline to predict pre-flare states in pediatric lupus patients using gene expression data from the GSE65391 dataset. The pipeline includes preprocessing, feature selection, nested cross-validation, and model interpretation using SHAP.
 
 ## Repository Structure
-## Repository Structure
-
-```
 repo/
 ├── scripts/
 │   ├── build_lupus_dataset.py        # Preprocessing pipeline
