@@ -27,7 +27,7 @@ This project develops a machine learning pipeline to predict pre-flare states in
 ### Step 1: Preprocessing
 [Open in Colab](https://colab.research.google.com/github/aaronc09/pediatric-lupus-flare-prediction-gene-expression-ml/blob/main/notebooks/01_build_lupus_dataset_colab.ipynb)
 ### Step 2: Machine Learning Pipeline
-[Open in Colab](https://colab.research.google.com/github/aaronc09/pediatric-lupus-flare-prediction-gene-expression-ml/blob/main/notebooks/02_run_ml_pipeline_colab.ipynb)
+[Open in Colab](https://colab.research.google.com/github/aaronc09/pediatric-lupus-flare-prediction-gene-expression-ml/blob/main/notebooks/02_run_lupus_ml_pipeline_colab.ipynb)
 
 ## Dataset
 - Source: GEO (GSE65391)
