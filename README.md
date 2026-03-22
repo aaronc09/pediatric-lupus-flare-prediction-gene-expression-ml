@@ -6,15 +6,23 @@ Systemic lupus erythematosus (SLE) is a chronic autoimmune disease characterized
 This project develops a machine learning pipeline to predict pre-flare states in pediatric lupus patients using gene expression data from the GSE65391 dataset. The pipeline includes preprocessing, feature selection, nested cross-validation, and model interpretation using SHAP.
 
 ## Repository Structure
-scripts/
-    build_lupus_dataset.py        # preprocessing pipeline
-    lupus_nested_cv_pipeline.py   # ML pipeline
-notebooks/
-    01_build_lupus_dataset_colab.ipynb   # run preprocessing pipeline on Google Colab
-    02_run_ml_pipeline_colab.ipynb       # run ML pipeline on Google Colab
-.gitignore
-requirements.txt
-README.md
+repo/
+├── scripts/
+│ ├── build_lupus_dataset.py # Preprocessing pipeline
+│ └── lupus_nested_cv_pipeline.py # Machine learning pipeline
+│
+├── notebooks/
+│ ├── 01_build_lupus_dataset_colab.ipynb # Run preprocessing (Colab)
+│ └── 02_run_ml_pipeline_colab.ipynb # Run ML pipeline (Colab)
+│
+├── outputs/
+│ ├── figures/ # Model performance plots, SHAP visualizations
+│ └── tables/ # Metrics, feature importance tables
+│
+├── requirements.txt
+├── .gitignore
+├── LICENSE
+└── README.md
 
 ## Run in Google Colab
 ### Step 1: Preprocessing
