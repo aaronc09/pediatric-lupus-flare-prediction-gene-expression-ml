@@ -1899,11 +1899,11 @@ def plot_correct_oof_genes_side_by_side(lr_df, xgb_df, save_path):
     fig, axes  = plt.subplots(2, 1, figsize=(22, fig_height), constrained_layout=False)
     fig.suptitle(
         "Top 10 Genes Associated with Correct Inner-Validation Predictions\nAcross Outer Training Folds",
-        fontsize=44, fontweight="bold",
+        fontsize=44, fontweight="bold", y=0.98,
     )
     _render_table(axes[0], lr_df,  get_model_display_name("LR_L2"))
     _render_table(axes[1], xgb_df, get_model_display_name("XGB"))
-    plt.subplots_adjust(top=0.92, bottom=0.02, hspace=0.12)
+    plt.subplots_adjust(top=0.88, bottom=0.02, hspace=0.12)
     plt.savefig(save_path, dpi=600, bbox_inches="tight")
     plt.close()
     return save_path
