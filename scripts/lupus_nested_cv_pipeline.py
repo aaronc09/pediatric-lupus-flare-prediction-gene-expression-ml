@@ -328,7 +328,7 @@ def get_search_space_tables():
         "Search space": [
             "int, [10, 100], step=10",
             "int, [200, 1500], step=50",
-            "int, [2, 4]",
+            "int, [2, 3]",
             "float, log scale, [0.01, 0.20]",
             "float, [0.6, 1.0]",
             "float, [0.5, 1.0]",
