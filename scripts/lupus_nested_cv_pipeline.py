@@ -151,7 +151,7 @@ TOP_K             = 20
 TOP_K_CORRECT_OOF = 10
 
 N_TRIALS_LR  = 40
-N_TRIALS_XGB = 150
+N_TRIALS_XGB = 80
 
 XGB_NJOBS = 1
 XGB_TREE  = "hist"
@@ -326,16 +326,16 @@ def get_search_space_tables():
             "reg_lambda", "reg_alpha", "max_delta_step",
         ],
         "Search space": [
-            "int, [10, 60], step=10",
+            "int, [10, 100], step=10",
             "int, [200, 1500], step=50",
-            "int, [2, 3]",
+            "int, [2, 4]",
             "float, log scale, [0.01, 0.20]",
-            "float, [0.6, 0.8]",
-            "float, [0.5, 0.8]",
-            "float, [20.0, 40.0]",
-            "float, [1.0, 5.0]",
-            "float, log scale, [10.0, 200.0]",
-            "float, log scale, [1e-3, 10.0]",
+            "float, [0.6, 1.0]",
+            "float, [0.5, 1.0]",
+            "float, [10.0, 30.0]",
+            "float, [0.0, 5.0]",
+            "float, log scale, [1.0, 100.0]",
+            "float, log scale, [1e-6, 10.0]",
             "int, [0, 8]",
         ]
     })
@@ -874,6 +874,7 @@ def tune_xgb_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=No
     if fold_cache is None:
         fold_cache = build_inner_fold_cache(X_train, y_train, g_train, seed)
 
+    # MedianPruner for XGB only — LR trials are fast enough that pruning overhead isn't justified
     study = optuna.create_study(
         direction="maximize",
         sampler=TPESampler(seed=seed),
@@ -884,14 +885,14 @@ def tune_xgb_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=No
         p = {
             "xgb_sel_topk":     trial.suggest_int("xgb_sel_topk", 10, 60, step=10),
             "n_estimators":     trial.suggest_int("n_estimators", 200, 1500, step=50),
-            "max_depth":        trial.suggest_int("max_depth", 2, 3),
+            "max_depth":        trial.suggest_int("max_depth", 2, 4),
             "learning_rate":    trial.suggest_float("learning_rate", 0.01, 0.20, log=True),
-            "subsample":        trial.suggest_float("subsample", 0.6, 0.8),
-            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 0.8),
-            "min_child_weight": trial.suggest_float("min_child_weight", 20.0, 40.0),
-            "gamma":            trial.suggest_float("gamma", 1.0, 5.0),
-            "reg_lambda":       trial.suggest_float("reg_lambda", 10.0, 200.0, log=True),
-            "reg_alpha":        trial.suggest_float("reg_alpha", 1e-3, 10.0, log=True),
+            "subsample":        trial.suggest_float("subsample", 0.6, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
+            "min_child_weight": trial.suggest_float("min_child_weight", 10.0, 30.0),
+            "gamma":            trial.suggest_float("gamma", 0.0, 5.0),
+            "reg_lambda":       trial.suggest_float("reg_lambda", 1.0, 100.0, log=True),
+            "reg_alpha":        trial.suggest_float("reg_alpha", 1e-6, 10.0, log=True),
             "max_delta_step":   trial.suggest_int("max_delta_step", 0, 8),
         }
         oof_probs, oof_pr, contributed = cv_oof_probs_pr_auc_from_cache(
@@ -1894,15 +1895,15 @@ def plot_correct_oof_genes_side_by_side(lr_df, xgb_df, save_path):
 
     n_rows     = max(len(lr_df) if lr_df is not None and not lr_df.empty else 1,
                      len(xgb_df) if xgb_df is not None and not xgb_df.empty else 1)
-    fig_height = max(10.0, (0.068 + 0.036) * n_rows * 8.5 + 3.5) * 2 + 4.0
-    fig, axes  = plt.subplots(2, 1, figsize=(22, fig_height))
+    fig_height = max(14.0, 1.1 * n_rows + 8.0)
+    fig, axes  = plt.subplots(2, 1, figsize=(22, fig_height), constrained_layout=False)
     fig.suptitle(
         "Top 10 Genes Associated with Correct Inner-Validation Predictions\nAcross Outer Training Folds",
-        fontsize=44, fontweight="bold", y=0.995,
+        fontsize=44, fontweight="bold",
     )
     _render_table(axes[0], lr_df,  get_model_display_name("LR_L2"))
     _render_table(axes[1], xgb_df, get_model_display_name("XGB"))
-    plt.tight_layout(rect=[0, 0, 1, 0.975], h_pad=3.5)
+    plt.subplots_adjust(top=0.92, bottom=0.02, hspace=0.12)
     plt.savefig(save_path, dpi=600, bbox_inches="tight")
     plt.close()
     return save_path
