@@ -328,7 +328,7 @@ def get_search_space_tables():
         "Search space": [
             "int, [10, 100], step=10",
             "int, [200, 1500], step=50",
-            "int, [1, 6]",
+            "int, [2, 4]",
             "float, log scale, [0.01, 0.20]",
             "float, [0.6, 1.0]",
             "float, [0.5, 1.0]",
@@ -1345,7 +1345,7 @@ def plot_metrics_table(summary_df, save_path):
     fig, ax = plt.subplots(figsize=(28, 18))
     ax.axis("off")
 
-    col_widths = [0.22, 0.24, 0.15, 0.24, 0.15]
+    col_widths = [0.16, 0.24, 0.22, 0.24, 0.14]
 
     tbl = ax.table(
         cellText=data,
