@@ -5,6 +5,42 @@ Predicting pre-flare states in pediatric SLE patients using whole-blood gene exp
 Systemic lupus erythematosus (SLE) is a chronic autoimmune disease characterized by unpredictable flares. Early prediction of flares could improve clinical management and patient outcomes.
 This project develops a machine learning pipeline to predict pre-flare states in pediatric lupus patients using gene expression data from the GSE65391 dataset. The pipeline includes preprocessing, feature selection, nested cross-validation, and model interpretation using SHAP.
 
+Preprocessed Data
+        ↓
+--------------------------------------------------
+Nested Cross-Validation (Outer 5-fold / Inner 5-fold)
+--------------------------------------------------
+        ↓
+Feature Selection
+  - Variance Threshold
+  - ANOVA (SelectKBest)
+  - Model-based selection (XGBoost)
+        ↓
+Hyperparameter Optimization
+  - Optuna (inner cross-validation)
+        ↓
+Model Training
+  - Logistic Regression (L2)
+  - XGBoost
+        ↓
+Threshold Selection
+  - Optimize F1 score
+        ↓
+Outer-Fold Evaluation
+  - Primary: PR-AUC
+  - Secondary:
+      ROC-AUC, F1, Recall, Precision,
+      Specificity, Balanced Accuracy, Brier Score
+--------------------------------------------------
+        ↓
+Cross-Validated Performance Summary
+        ↓
+SHAP Analysis
+  - Feature importance
+  - Direction of effect
+        ↓
+Permutation-Based Sanity Checks
+
 ## Repository Structure
   - **scripts/**
     - `build_lupus_dataset.py` — Preprocessing pipeline  
@@ -34,6 +70,7 @@ This project develops a machine learning pipeline to predict pre-flare states in
 - Platform: Illumina HumanHT-12 v4.0
 - Type: Whole-blood gene expression
 - The dataset is publicly available via NCBI GEO.
+
 
 ## Methods
 - Longitudinal pairing of patient visits
