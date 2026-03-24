@@ -39,6 +39,9 @@ Preprocessed Data
     - `01_build_lupus_dataset_colab.ipynb` — Run preprocessing (Colab)  
     - `02_run_ml_pipeline_colab.ipynb` — Run ML pipeline (Colab)  
 
+  - **docs/**
+    - **figures/** — Model performance plots, SHAP visualizations  
+
   - **outputs/**
     - **figures/** — Model performance plots, SHAP visualizations  
     - **tables/** — Metrics, feature importance tables
@@ -59,7 +62,6 @@ Preprocessed Data
 - Platform: Illumina HumanHT-12 v4.0
 - Type: Whole-blood gene expression
 - The dataset is publicly available via NCBI GEO.
-
 
 ## Methods
 - Longitudinal pairing of patient visits
