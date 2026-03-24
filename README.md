@@ -68,25 +68,26 @@ The models demonstrated weak to moderate predictive signals.
 
 flowchart TD
 
-A[Preprocessed Data]
+A["Preprocessed Data"]
 
-subgraph CV[Nested Cross-Validation (Outer 5-fold / Inner 5-fold)]
-    B1[Feature Selection<br/>Variance + ANOVA + Model-based]
-    B2[Hyperparameter Optimization<br/>Optuna]
-    B3[Model Training<br/>Logistic Regression / XGBoost]
-    B4[Threshold Selection]
-    B5[Outer-Fold Evaluation<br/>
-        Primary: PR-AUC<br/>
-        Secondary: ROC-AUC, F1, Recall,<br/>
-        Precision, Specificity,<br/>
-        Balanced Accuracy, Brier Score]
+subgraph CV["Nested Cross-Validation: Outer 5-fold / Inner 5-fold"]
+    B1["Feature Selection: Variance + ANOVA + Model-based"]
+    B2["Hyperparameter Optimization: Optuna"]
+    B3["Model Training: Logistic Regression / XGBoost"]
+    B4["Threshold Selection"]
+    B5["Outer-Fold Evaluation: Primary PR-AUC; Secondary ROC-AUC, F1, Recall, Precision, Specificity, Balanced Accuracy, Brier Score"]
 
-    B1 --> B2 --> B3 --> B4 --> B5
+    B1 --> B2
+    B2 --> B3
+    B3 --> B4
+    B4 --> B5
 end
 
-C[Cross-Validated Performance]
-D[SHAP Analysis]
-E[Permutation-Based Sanity Checks]
+C["Cross-Validated Performance"]
+D["SHAP Analysis"]
+E["Permutation-Based Sanity Checks"]
 
 A --> B1
-B5 --> C --> D --> E
+B5 --> C
+C --> D
+D --> E
