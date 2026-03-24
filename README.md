@@ -5,41 +5,30 @@ Predicting pre-flare states in pediatric SLE patients using whole-blood gene exp
 Systemic lupus erythematosus (SLE) is a chronic autoimmune disease characterized by unpredictable flares. Early prediction of flares could improve clinical management and patient outcomes.
 This project develops a machine learning pipeline to predict pre-flare states in pediatric lupus patients using gene expression data from the GSE65391 dataset. The pipeline includes preprocessing, feature selection, nested cross-validation, and model interpretation using SHAP.
 
+## Modeling Pipeline
+
 Preprocessed Data
-        ↓
---------------------------------------------------
-Nested Cross-Validation (Outer 5-fold / Inner 5-fold)
---------------------------------------------------
-        ↓
-Feature Selection
-  - Variance Threshold
-  - ANOVA (SelectKBest)
-  - Model-based selection (XGBoost)
-        ↓
-Hyperparameter Optimization
-  - Optuna (inner cross-validation)
-        ↓
-Model Training
-  - Logistic Regression (L2)
-  - XGBoost
-        ↓
-Threshold Selection
-  - Optimize F1 score
-        ↓
-Outer-Fold Evaluation
-  - Primary: PR-AUC
-  - Secondary:
-      ROC-AUC, F1, Recall, Precision,
-      Specificity, Balanced Accuracy, Brier Score
---------------------------------------------------
-        ↓
-Cross-Validated Performance Summary
-        ↓
-SHAP Analysis
-  - Feature importance
-  - Direction of effect
-        ↓
-Permutation-Based Sanity Checks
+
+- Nested Cross-Validation (Outer 5-fold / Inner 5-fold)
+  - Feature Selection
+    - Variance Threshold
+    - ANOVA (SelectKBest)
+    - Model-based selection (XGBoost)
+  - Hyperparameter Optimization (Optuna, inner CV)
+  - Model Training
+    - Logistic Regression (L2)
+    - XGBoost
+  - Threshold Selection (optimize F1)
+  - Outer-Fold Evaluation
+    - Primary: PR-AUC
+    - Secondary: ROC-AUC, F1, Recall, Precision, Specificity, Balanced Accuracy, Brier Score
+
+- Model Performance (Cross-Validated)
+
+- SHAP Analysis
+
+- Permutation-Based Sanity Checks
+
 
 ## Repository Structure
   - **scripts/**
