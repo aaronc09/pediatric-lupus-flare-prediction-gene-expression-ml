@@ -1,3 +1,58 @@
+# Pediatric Lupus Flare Prediction (Gene Expression ML)
+
+Leakage-safe machine learning pipeline to predict near-term (≤90 days) lupus flares in pediatric systemic lupus erythematosus (SLE) using gene-expression data (GSE65391).
+
+## Overview
+- Dataset: GSE65391 (Illumina GPL10558)  
+- Samples: ~440 paired visits (~104 patients)  
+- Task: Predict pre-flare (SLEDAI increase ≥4 within 90 days)  
+- Class prevalence: ~16.6%  
+
+## Run in Google Colab
+
+Step 1: Preprocessing  
+[Open in Colab](https://colab.research.google.com/github/aaronc09/pediatric-lupus-flare-prediction-gene-expression-ml/blob/main/notebooks/01_build_lupus_dataset_colab.ipynb)
+
+Step 2: Machine Learning Pipeline  
+[Open in Colab](https://colab.research.google.com/github/aaronc09/pediatric-lupus-flare-prediction-gene-expression-ml/blob/main/notebooks/02_run_ml_pipeline_colab.ipynb)
+
+Run Step 1 first to generate the dataset, then Step 2 to train and evaluate models.
+
+## Approach
+- Subject-level nested cross-validation (5x5)  
+- StratifiedGroupKFold (prevents data leakage)  
+- Feature selection within folds (variance → ANOVA → model-based)  
+- Models: Logistic Regression (L2), XGBoost  
+- Hyperparameter tuning: Optuna (PR-AUC objective)  
+
+## Results
+- Logistic Regression PR-AUC: ~0.21  
+- XGBoost PR-AUC: ~0.25  
+- Baseline: ~0.17  
+
+→ Modest predictive signal with high variability across folds  
+
+## Structure
+- scripts/: preprocessing and ML pipeline  
+- notebooks/: Colab notebooks  
+- outputs/: results (figures, tables, SHAP, logs)  
+
+## Notes
+- Nested CV + grouped splits to avoid leakage  
+- Gene-expression alone shows limited predictive power  
+- Likely requires multimodal data + subtyping  
+
+## Citation
+Choi A. *Machine Learning Prediction of Pediatric Lupus Flares Using Gene Expression Data*. 2026.
+
+## License
+MIT
+
+
+
+
+
+
 # Pediatric Lupus Flare Prediction using Gene Expression and Machine Learning
 Predicting pre-flare states in pediatric SLE patients using whole-blood gene expression data (GSE65391) and machine learning models with SHAP-based interpretation.
 
