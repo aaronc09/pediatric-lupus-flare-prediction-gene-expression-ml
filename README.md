@@ -1,4 +1,4 @@
-# Pediatric Lupus Flare Prediction using Gene Expression and Machine Learning
+# Machine Learning-Based Prediction of Pediatric Lupus Flares Using Gene-Expression Data
 
 Leakage-safe machine learning pipeline to predict near-term (≤90 days) lupus flares in pediatric systemic lupus erythematosus (SLE) using gene-expression data (GSE65391).
 
