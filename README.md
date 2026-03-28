@@ -43,10 +43,6 @@ Preprocessed Data
 - SHAP Analysis  
 - Permutation-Based Sanity Checks  
 
-## Modeling Pipeline Diagram
-
-![Modeling Pipeline](docs/02_modeling_pipeline_compact.png)
-
 ## Run in Google Colab
 
 Step 1: Preprocessing  
