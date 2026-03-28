@@ -72,7 +72,7 @@ Run Step 1 first to generate the dataset, then Step 2 to train and evaluate mode
 - outputs/ — results (figures, tables, SHAP, logs)  
 
 ## Citation
-Choi A. *Machine Learning Prediction of Pediatric Lupus Flares Using Gene Expression Data*. 2026.
+Choi A. *Machine Learning-Based Prediction of Pediatric Lupus Flares Using Gene Expression Data*. 2026.
 
 ## License
 MIT License
