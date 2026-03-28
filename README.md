@@ -43,6 +43,10 @@ Preprocessed Data
 - SHAP Analysis  
 - Permutation-Based Sanity Checks  
 
+## Modeling Pipeline Diagram
+
+![Modeling Pipeline](docs/02_modeling_pipeline_compact.png)
+
 ## Run in Google Colab
 
 Step 1: Preprocessing  
@@ -66,9 +70,10 @@ Run Step 1 first to generate the dataset, then Step 2 to train and evaluate mode
 - Likely requires multimodal data and patient subtyping  
 
 ## Structure
-- scripts/: preprocessing and ML pipeline  
-- notebooks/: Colab notebooks  
-- outputs/: results (figures, tables, SHAP, logs)  
+- docs/ — pipeline diagrams and summary files  
+- scripts/ — preprocessing and ML pipeline  
+- notebooks/ — Colab notebooks  
+- outputs/ — results (figures, tables, SHAP, logs)  
 
 ## Citation
 Choi A. *Machine Learning Prediction of Pediatric Lupus Flares Using Gene Expression Data*. 2026.
