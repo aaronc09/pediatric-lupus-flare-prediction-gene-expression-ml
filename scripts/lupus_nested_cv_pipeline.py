@@ -20,7 +20,7 @@
 #
 # Outputs:
 #   - Tables, SHAP summaries, and logs
-#   - To generate figures set GENERATE_FIGURES = True
+#   - Figures if GENERATE_FIGURES = True
 #
 # Notes:
 #   - Designed for reproducible execution locally and in Google Colab
@@ -218,6 +218,18 @@ def _make_output_dirs(base: str) -> dict:
     for d in dirs.values():
         os.makedirs(d, exist_ok=True)
     return dirs
+
+
+def clear_old_png_files(figures_dir: str) -> None:
+    if not os.path.isdir(figures_dir):
+        return
+    for fname in os.listdir(figures_dir):
+        if fname.lower().endswith(".png"):
+            fpath = os.path.join(figures_dir, fname)
+            try:
+                os.remove(fpath)
+            except OSError:
+                logger.warning("Could not delete old figure file: %s", fpath)
 
 
 # =============================================================================
@@ -2325,19 +2337,19 @@ def _generate_shap_outputs(run_store, gene_name_map, dirs):
     lr_gene_labels  = lr_shap_df["Gene"].tolist()  if not lr_shap_df.empty  else []
     xgb_gene_labels = xgb_shap_df["Gene"].tolist() if not xgb_shap_df.empty else []
 
-    pr_curves_side_png = os.path.join(dirs["figures"], "05_pr-auc_curves.png")
+    pr_curves_side_png = os.path.join(dirs["figures"], "05_pr_auc_curves.png")
     plot_pr_auc_curves_side_by_side(run_store, fold_ids, pr_curves_side_png)
 
-    shap_bar_side_png = os.path.join(dirs["figures"], "07_standard_shap_bars.png")
+    shap_bar_side_png = os.path.join(dirs["figures"], "07_shap_bar_lr_vs_xgb.png")
     plot_shap_bar_side_by_side(lr_shap_df, xgb_shap_df, shap_bar_side_png)
 
-    beeswarm_side_png = os.path.join(dirs["figures"], "08_shap_beeswarm_side_by_side.png")
+    beeswarm_side_png = os.path.join(dirs["figures"], "08_shap_beeswarm.png")
     if lr_gene_labels or xgb_gene_labels:
         plot_beeswarm_side_by_side(run_store, lr_gene_labels, xgb_gene_labels, beeswarm_side_png)
     else:
         beeswarm_side_png = None
 
-    correct_oof_side_png = os.path.join(dirs["figures"], "09_top10_correct_influencing_genes.png")
+    correct_oof_side_png = os.path.join(dirs["figures"], "09_top10_correct_oof_genes.png")
     plot_correct_oof_genes_side_by_side(lr_correct, xgb_correct, correct_oof_side_png)
 
     return {
@@ -2394,8 +2406,8 @@ def _export_summary_outputs(
         fig_title="Best Hyperparameters Selected for Each Outer Training Fold",
     )
 
-    cm_lr_png  = os.path.join(dirs["figures"], "03_confusion_matrices_outer_test_lr_l2.png")
-    cm_xgb_png = os.path.join(dirs["figures"], "03_confusion_matrices_outer_test_xgb.png")
+    cm_lr_png  = os.path.join(dirs["figures"], "03a_confusion_matrix_lr_l2.png")
+    cm_xgb_png = os.path.join(dirs["figures"], "03b_confusion_matrix_xgb.png")
     plot_confusion_matrices_one_model(all_cms, list(range(1, N_OUTER_FOLDS + 1)), "LR_L2", cm_lr_png)
     plot_confusion_matrices_one_model(all_cms, list(range(1, N_OUTER_FOLDS + 1)), "XGB",   cm_xgb_png)
 
@@ -2448,7 +2460,7 @@ def _export_summary_outputs(
         permutation_df  = run_permutation_sanity_check_on_outer_test_folds(outer_summaries)
         permutation_df  = round_numeric_df(permutation_df, 2)
         permutation_csv = os.path.join(dirs["tables"],  "permutation_sanity_check.csv")
-        permutation_png = os.path.join(dirs["figures"], "10_permutation_sanity_check_both_models.png")
+        permutation_png = os.path.join(dirs["figures"], "10_permutation_sanity_check.png")
         permutation_df.to_csv(permutation_csv, index=False)
         plot_permutation_table_top_bottom(permutation_df, permutation_png)
     else:
@@ -2579,6 +2591,9 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
     seed_everything(GLOBAL_SEED)
     dirs = _make_output_dirs(output_dir)
 
+    if GENERATE_FIGURES:
+        clear_old_png_files(dirs["figures"])
+
     import time
     for dir_path in dirs.values():
         test_file = os.path.join(dir_path, '.write_test')
@@ -2612,7 +2627,7 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
     gene_name_map = load_gene_name_map(gene_cols, annotation_path)
 
     search_spaces    = get_search_space_tables()
-    search_space_png = os.path.join(dirs["figures"], "01_hyperparameter_search_space_tables.png")
+    search_space_png = os.path.join(dirs["figures"], "01_hyperparameter_search_space.png")
     plot_two_tables_side_by_side_with_gap(
         search_spaces["LR_L2"], "Logistic Regression L2",
         search_spaces["XGB"],   "XGBoost",
