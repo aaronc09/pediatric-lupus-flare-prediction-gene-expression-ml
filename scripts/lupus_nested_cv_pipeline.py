@@ -19,7 +19,8 @@
 #   - Preprocessed feature table: lupus_final_df.pkl
 #
 # Outputs:
-#   - Figures, tables, SHAP summaries, and logs
+#   - Tables, SHAP summaries, and logs
+#   - To generate figures set GENERATE_FIGURES = True
 #
 # Notes:
 #   - Designed for reproducible execution locally and in Google Colab
@@ -200,6 +201,11 @@ AXIS_LABEL_SIZE    = 22
 TICK_LABEL_SIZE    = 20
 VALUE_LABEL_SIZE   = 18
 LEGEND_SIZE        = 16
+
+GENERATE_FIGURES = False
+
+if not GENERATE_FIGURES:
+    plt.savefig = lambda *args, **kwargs: None
 
 
 def _make_output_dirs(base: str) -> dict:
@@ -1219,6 +1225,7 @@ def plot_two_tables_side_by_side_with_gap(
         fig.suptitle(fig_title, fontsize=48, fontweight="bold", y=0.99)
 
     for ax, df, title in [(ax_left, df_left, title_left), (ax_right, df_right, title_right)]:
+        df = round_numeric_df(df, 2)
         draw_single_table(
             ax, df, title,
             fontsize=TABLE_BODY_FONTSIZE, header_fontsize=TABLE_HEADER_FONTSIZE,
@@ -1302,6 +1309,7 @@ def plot_confusion_matrices_one_model(all_cms, fold_ids, model_name, save_path):
 
 def plot_metrics_table(summary_df, save_path):
     """Render mean ± SD and median metrics for both models as a formatted table."""
+    summary_df = round_numeric_df(summary_df, 2)
     METRIC_DISPLAY = {
         "PR-AUC (PRIMARY)":  "PR-AUC (PRIMARY)",
         "AUC-ROC":           "AUC-ROC",
@@ -1345,7 +1353,7 @@ def plot_metrics_table(summary_df, save_path):
     fig, ax = plt.subplots(figsize=(28, 18))
     ax.axis("off")
 
-    col_widths = [0.16, 0.24, 0.22, 0.24, 0.14]
+    col_widths = [0.22, 0.24, 0.15, 0.24, 0.15]
 
     tbl = ax.table(
         cellText=data,
@@ -1386,6 +1394,7 @@ def plot_metrics_table(summary_df, save_path):
 
 
 def plot_per_fold_metrics_side_by_side(supp_df, save_path):
+    supp_df = round_numeric_df(supp_df, 2)
     METRIC_DISPLAY = {
         "PR-AUC (PRIMARY)":  "PR-AUC",
         "OOF PR-AUC":        "OOF PR-AUC",
@@ -1425,7 +1434,7 @@ def plot_per_fold_metrics_side_by_side(supp_df, save_path):
                 if not tmp.empty:
                     v = tmp.iloc[0][metric]
                     if pd.notna(v):
-                        val = str(int(round(float(v)))) if metric in count_metrics else f"{float(v):.3f}"
+                        val = str(int(round(float(v)))) if metric in count_metrics else f"{float(v):.2f}"
                 row[f"Fold {fold_id}"] = val
             rows.append(row)
         return pd.DataFrame(rows)
@@ -1470,7 +1479,7 @@ def plot_per_fold_metrics_side_by_side(supp_df, save_path):
     if len(models) == 1:
         axes = [axes]
     fig.suptitle(
-        "Supplementary Table: Per-Fold Held-Out Test Metrics Across Outer Folds",
+        "Per-Fold Held-Out Test Metrics Across Outer Folds",
         fontsize=44, fontweight="bold", y=1.02,
     )
     for ax, model_name in zip(axes, models):
@@ -1488,6 +1497,7 @@ def plot_permutation_table_top_bottom(perm_df, save_path):
     Permutation sanity-check results as two stacked tables (LR top, XGB bottom),
     with metrics as rows and folds as columns.
     """
+    perm_df = round_numeric_df(perm_df, 2)
     METRIC_DISPLAY = {
         "OOF PR-AUC (Permuted Train Labels)": "OOF PR-AUC\n(Permuted Labels)",
         "Held-Out Test PR-AUC":               "Held-Out\nTest PR-AUC",
@@ -1514,7 +1524,7 @@ def plot_permutation_table_top_bottom(perm_df, save_path):
                 if not tmp.empty:
                     v = tmp.iloc[0][metric]
                     if pd.notna(v):
-                        val = str(int(round(float(v)))) if metric == "Features selected" else f"{float(v):.3f}"
+                        val = str(int(round(float(v)))) if metric == "Features selected" else f"{float(v):.2f}"
                 row[f"Fold {fold_id}"] = val
             rows.append(row)
         return pd.DataFrame(rows)
@@ -1587,14 +1597,14 @@ def _draw_pr_auc_on_ax(ax, run_store, model_name, fold_ids):
         y_test = run_store[key]["y_test"]
         precision, recall, _ = precision_recall_curve(y_test.values, probs)
         pr_auc = average_precision_score(y_test.values, probs)
-        ax.plot(recall, precision, linewidth=2, label=f"Fold {fold_id} (PR-AUC={pr_auc:.3f})")
+        ax.plot(recall, precision, linewidth=2, label=f"Fold {fold_id} (PR-AUC={pr_auc:.2f})")
 
     positive_rates = [
         run_store[(fid, model_name)]["y_test"].mean()
         for fid in fold_ids if (fid, model_name) in run_store
     ]
     baseline = float(np.mean(positive_rates)) if positive_rates else 0.5
-    ax.axhline(y=baseline, linestyle="--", linewidth=1.5, label=f"Baseline={baseline:.3f}")
+    ax.axhline(y=baseline, linestyle="--", linewidth=1.5, label=f"Baseline={baseline:.2f}")
     ax.set_xlabel("Recall",    fontsize=AXIS_LABEL_SIZE)
     ax.set_ylabel("Precision", fontsize=AXIS_LABEL_SIZE)
     ax.set_title(get_model_display_name(model_name), fontsize=SUBPLOT_TITLE_SIZE, fontweight="bold")
@@ -1630,6 +1640,7 @@ def plot_shap_bar_side_by_side(lr_shap_df, xgb_shap_df, save_path):
             ax.set_title(get_model_display_name(model_name), fontsize=SUBPLOT_TITLE_SIZE, fontweight="bold")
             continue
 
+        df = round_numeric_df(df, 2)
         plot_df = df.sort_values("Mean |SHAP| (Global)", ascending=True).copy()
         plot_df["Gene"] = plot_df["Gene"].apply(lambda s: wrap_text(s, width=28))
         vals = plot_df["Mean |SHAP| (Global)"].values
@@ -1839,6 +1850,7 @@ def plot_correct_oof_genes_side_by_side(lr_df, xgb_df, save_path):
             return df
         display_cols = [c for c in ["Gene", "Folds Appearing", "Stability Score", "Mean |SHAP| (OOF Correct Train)", "Direction"] if c in df.columns]
         plot_df = df[display_cols].copy()
+        plot_df = round_numeric_df(plot_df, 2)
         for c in plot_df.select_dtypes(include=[float]).columns:
             plot_df[c] = plot_df[c].round(4)
         plot_df = plot_df.rename(columns={
@@ -1895,15 +1907,15 @@ def plot_correct_oof_genes_side_by_side(lr_df, xgb_df, save_path):
 
     n_rows     = max(len(lr_df) if lr_df is not None and not lr_df.empty else 1,
                      len(xgb_df) if xgb_df is not None and not xgb_df.empty else 1)
-    fig_height = max(14.0, 1.1 * n_rows + 8.0)
-    fig, axes  = plt.subplots(2, 1, figsize=(22, fig_height), constrained_layout=False)
+    fig_height = max(10.0, (0.068 + 0.036) * n_rows * 8.5 + 3.5) * 2 + 4.0
+    fig, axes  = plt.subplots(2, 1, figsize=(22, fig_height))
     fig.suptitle(
         "Top 10 Genes Associated with Correct Inner-Validation Predictions\nAcross Outer Training Folds",
-        fontsize=44, fontweight="bold", y=0.98,
+        fontsize=44, fontweight="bold", y=0.995,
     )
     _render_table(axes[0], lr_df,  get_model_display_name("LR_L2"))
     _render_table(axes[1], xgb_df, get_model_display_name("XGB"))
-    plt.subplots_adjust(top=0.88, bottom=0.02, hspace=0.12)
+    plt.tight_layout(rect=[0, 0, 1, 0.975], h_pad=3.5)
     plt.savefig(save_path, dpi=600, bbox_inches="tight")
     plt.close()
     return save_path
@@ -2119,15 +2131,15 @@ def show_final_outputs_in_order(
     ordered_paths = [
         ("1) Hyperparameter search space",                       search_space_png),
         ("2) Best hyperparameters selected for each outer fold", best_params_png),
-        ("3A) Confusion matrices — Logistic Regression L2",      cm_lr_png),
-        ("3B) Confusion matrices — XGBoost",                     cm_xgb_png),
-        ("4) PR-AUC curves — LR L2 vs XGB",                      pr_curves_side_png),
-        ("5) Final average classification metrics",              metrics_png),
-        ("6) SHAP bar — LR L2 vs XGB",                           shap_bar_side_png),
-        ("7) SHAP beeswarm — LR L2 vs XGB",                      beeswarm_side_png),
-        ("8) Top 10 correct-OOF genes — LR L2 vs XGB",          correct_oof_side_png),
-        ("9) Permutation-label sanity check (both models)",      permutation_png),
-        ("10) Supplementary: per-fold held-out test metrics",    per_fold_supp_png),
+        ("3a) Confusion matrices — Logistic Regression L2",      cm_lr_png),
+        ("3b) Confusion matrices — XGBoost",                     cm_xgb_png),
+        ("4) Per-fold held-out test metrics",                    per_fold_supp_png),
+        ("5) PR-AUC curves",                                     pr_curves_side_png),
+        ("6) Final average classification metrics",              metrics_png),
+        ("7) SHAP bar — LR L2 vs XGB",                           shap_bar_side_png),
+        ("8) SHAP beeswarm",                                     beeswarm_side_png),
+        ("9) Top 10 correct-OOF genes — LR L2 vs XGB",           correct_oof_side_png),
+        ("10) Permutation-label sanity check (both models)",     permutation_png),
     ]
     for title, path in ordered_paths:
         if path is None:
@@ -2267,7 +2279,7 @@ def _run_one_outer_split(outer_idx, tr_idx, te_idx, X, y, groups, gene_cols, gen
         params_rows_list.append({"model_name": model_name, "row": row})
 
         logger.info(
-            "%s | split %d: TEST PR-AUC=%.4f | OOF PR-AUC=%.4f | ROC-AUC=%.4f | F1=%.4f | coverage=%.1f%% | thr=%.3f",
+            "%s | split %d: TEST PR-AUC=%.4f | OOF PR-AUC=%.4f | ROC-AUC=%.4f | F1=%.4f | coverage=%.1f%% | thr=%.2f",
             get_model_display_name(model_name), outer_idx,
             metrics["PR-AUC (PRIMARY)"], metrics["OOF PR-AUC"],
             metrics["AUC-ROC"], metrics["F1"], metrics["OOF Coverage"] * 100, thr,
@@ -2313,19 +2325,19 @@ def _generate_shap_outputs(run_store, gene_name_map, dirs):
     lr_gene_labels  = lr_shap_df["Gene"].tolist()  if not lr_shap_df.empty  else []
     xgb_gene_labels = xgb_shap_df["Gene"].tolist() if not xgb_shap_df.empty else []
 
-    pr_curves_side_png = os.path.join(dirs["figures"], "04_pr_auc_curves_side_by_side.png")
+    pr_curves_side_png = os.path.join(dirs["figures"], "05_pr-auc_curves.png")
     plot_pr_auc_curves_side_by_side(run_store, fold_ids, pr_curves_side_png)
 
-    shap_bar_side_png = os.path.join(dirs["figures"], "06_standard_shap_bar_side_by_side.png")
+    shap_bar_side_png = os.path.join(dirs["figures"], "07_standard_shap_bars.png")
     plot_shap_bar_side_by_side(lr_shap_df, xgb_shap_df, shap_bar_side_png)
 
-    beeswarm_side_png = os.path.join(dirs["figures"], "07_shap_beeswarm_side_by_side.png")
+    beeswarm_side_png = os.path.join(dirs["figures"], "08_shap_beeswarm_side_by_side.png")
     if lr_gene_labels or xgb_gene_labels:
         plot_beeswarm_side_by_side(run_store, lr_gene_labels, xgb_gene_labels, beeswarm_side_png)
     else:
         beeswarm_side_png = None
 
-    correct_oof_side_png = os.path.join(dirs["figures"], "08_correct_oof_genes_top10.png")
+    correct_oof_side_png = os.path.join(dirs["figures"], "09_top10_correct_influencing_genes.png")
     plot_correct_oof_genes_side_by_side(lr_correct, xgb_correct, correct_oof_side_png)
 
     return {
@@ -2361,9 +2373,10 @@ def _export_summary_outputs(
 
     if not lr_best_params_df.empty:
         lr_best_params_df = lr_best_params_df.sort_values("Outer Fold").reset_index(drop=True)
+        lr_best_params_df = round_numeric_df(lr_best_params_df, decimals=2)
     if not xgb_best_params_df.empty:
         xgb_best_params_df = xgb_best_params_df.sort_values("Outer Fold").reset_index(drop=True)
-        xgb_best_params_df = round_numeric_df(xgb_best_params_df, decimals=3)
+        xgb_best_params_df = round_numeric_df(xgb_best_params_df, decimals=2)
 
     lr_best_params_df.to_csv( os.path.join(dirs["tables"], "best_params_lr_l2.csv"),  index=False)
     xgb_best_params_df.to_csv(os.path.join(dirs["tables"], "best_params_xgboost.csv"), index=False)
@@ -2373,7 +2386,7 @@ def _export_summary_outputs(
         plot_df.columns = ["Parameter"] + [f"Fold {int(c)}" for c in plot_df.columns[1:]]
         return plot_df
 
-    best_params_png = os.path.join(dirs["figures"], "02_best_hyperparameters_side_by_side.png")
+    best_params_png = os.path.join(dirs["figures"], "02_best_hyperparameters_selected.png")
     plot_two_tables_side_by_side_with_gap(
         _transpose_params_df(lr_best_params_df),  "Logistic Regression L2",
         _transpose_params_df(xgb_best_params_df), "XGBoost",
@@ -2391,7 +2404,7 @@ def _export_summary_outputs(
         mean_val, std_val, med_val = s.mean(skipna=True), s.std(skipna=True), s.median(skipna=True)
         if pd.isna(mean_val):
             return "NA"
-        return f"{mean_val:.3f} ± {std_val if not pd.isna(std_val) else 0.0:.3f}\n({med_val:.3f})"
+        return f"{mean_val:.2f} ± {std_val if not pd.isna(std_val) else 0.0:.2f}\n({med_val:.2f})"
 
     summary = {}
     for m in MODEL_NAMES:
@@ -2407,12 +2420,13 @@ def _export_summary_outputs(
             "Balanced Accuracy": _ms(sub["Balanced Accuracy"]),
             "OOF PR-AUC":        _ms(sub["OOF PR-AUC"]),
             "Brier Score":       _ms(sub["Brier Score"]),
-            "Features selected": f"{feat_s.mean(skipna=True):.3f} ± {feat_s.std(skipna=True) if not pd.isna(feat_s.std(skipna=True)) else 0.0:.3f}\n({feat_s.median(skipna=True):.3f})",
+            "Features selected": f"{feat_s.mean(skipna=True):.2f} ± {feat_s.std(skipna=True) if not pd.isna(feat_s.std(skipna=True)) else 0.0:.2f}\n({feat_s.median(skipna=True):.2f})",
             "Threshold":         _ms(sub["Threshold"]),
         }
 
     summary_df = pd.DataFrame(summary).T
     summary_df.index = [get_model_display_name(idx) for idx in summary_df.index]
+    summary_df = round_numeric_df(summary_df, 2)
 
     logger.info("=== SUMMARY — Held-Out Test Set (mean ± std [median] across %d outer folds) ===", N_OUTER_FOLDS)
     logger.info("\n%s", summary_df.to_string())
@@ -2424,7 +2438,7 @@ def _export_summary_outputs(
         logger.info("  %s: held-out PR-AUC=%.4f | inner OOF PR-AUC=%.4f", get_model_display_name(m), mean_test_pr_auc[m], mean_oof[m])
     logger.info("  Best model (held-out PR-AUC): %s", get_model_display_name(best_model_name))
 
-    metrics_png = os.path.join(dirs["figures"], "05_final_average_classification_metrics.png")
+    metrics_png = os.path.join(dirs["figures"], "06_final_average_classification_metrics.png")
     plot_metrics_table(summary_df, metrics_png)
     summary_df.to_csv(os.path.join(dirs["tables"], "average_metrics_summary.csv"), index=True)
 
@@ -2432,8 +2446,9 @@ def _export_summary_outputs(
 
     if RUN_PERMUTATION_CHECK:
         permutation_df  = run_permutation_sanity_check_on_outer_test_folds(outer_summaries)
+        permutation_df  = round_numeric_df(permutation_df, 2)
         permutation_csv = os.path.join(dirs["tables"],  "permutation_sanity_check.csv")
-        permutation_png = os.path.join(dirs["figures"], "09_permutation_sanity_check_both_models.png")
+        permutation_png = os.path.join(dirs["figures"], "10_permutation_sanity_check_both_models.png")
         permutation_df.to_csv(permutation_csv, index=False)
         plot_permutation_table_top_bottom(permutation_df, permutation_png)
     else:
@@ -2449,9 +2464,10 @@ def _export_summary_outputs(
     supp_df = supp_df.sort_values(["Model", "Outer Fold"]).reset_index(drop=True)
     supp_df["Model"] = supp_df["Model"].map(get_model_display_name)
     for col in [c for c in supp_df.columns if c not in ("Outer Fold", "Model", "Test Subjects", "Pre-flare (n)", "Non-pre-flare (n)")]:
-        supp_df[col] = pd.to_numeric(supp_df[col], errors="coerce").round(3)
+        supp_df[col] = pd.to_numeric(supp_df[col], errors="coerce").round(2)
+    supp_df = round_numeric_df(supp_df, 2)
 
-    per_fold_supp_png = os.path.join(dirs["figures"], "10_supplementary_per_fold_test_metrics.png")
+    per_fold_supp_png = os.path.join(dirs["figures"], "04_per_fold_test_metrics.png")
     plot_per_fold_metrics_side_by_side(supp_df, save_path=per_fold_supp_png)
 
     output_dir = os.path.dirname(dirs["figures"])
@@ -2608,6 +2624,7 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
         outer_cv, X, y, groups, outer_is_stratified, dirs["logs"],
     )
 
+    # Preserve original sample identifiers (e.g. GSM IDs) in fold assignment exports.
     fold_assignment_rows = []
     test_assignment_rows = []
     for outer_idx, (tr_idx, te_idx) in enumerate(fold_indices, start=1):
