@@ -12,7 +12,7 @@ Leakage-safe machine learning pipeline to predict near-term (≤90 days) lupus f
 - Dataset: GSE65391 (Illumina GPL10558)  
 - Samples: ~440 paired visits (~104 patients)  
 - Task: Predict pre-flare (SLEDAI increase ≥4 within 90 days)  
-- Class prevalence: ~16.6%  
+- Class prevalence: ~17%  
 
 ## Approach
 - Subject-level nested cross-validation (5×5)  
