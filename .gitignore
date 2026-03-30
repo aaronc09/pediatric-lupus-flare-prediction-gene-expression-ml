@@ -14,5 +14,20 @@ outputs/*.parquet
 outputs/*.csv.gz
 outputs/*.json
 
+# Generated output folders
+outputs/figures/
+outputs/tables/
+outputs/shap/
+outputs/logs/
+
+# (Alternative: ignore everything)
+# outputs/ml_outputs/
+
+# Generated figures (extra safety)
+outputs/figures/*.png
+
 # Logs
 *.log
+
+# Temporary Colab script
+*_colab_run.py
