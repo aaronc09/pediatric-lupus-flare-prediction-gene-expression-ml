@@ -57,6 +57,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+plt.ioff()  # disable interactive display — prevents inline rendering in Colab
+
+
 import sklearn
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
@@ -1540,7 +1543,7 @@ def plot_two_tables_side_by_side_with_gap(
 
     plt.tight_layout(rect=[0, 0, 1, 0.965], pad=0.6, w_pad=1.2)
     plt.savefig(save_path, dpi=600, bbox_inches="tight")
-    plt.close()
+    plt.close('all')
 
 
 def plot_confusion_matrices_one_model(all_cms, fold_ids, model_name, save_path):
@@ -1609,7 +1612,7 @@ def plot_confusion_matrices_one_model(all_cms, fold_ids, model_name, save_path):
 
     plt.subplots_adjust(left=0.08, right=0.89, top=0.90, bottom=0.10, hspace=0.42, wspace=0.30)
     plt.savefig(save_path, dpi=600, bbox_inches="tight")
-    plt.close()
+    plt.close('all')
 
 
 def plot_metrics_table(summary_df, save_path):
@@ -1636,7 +1639,7 @@ def plot_metrics_table(summary_df, save_path):
 
     def _split(val):
         s = str(val).strip()
-        if s in ("nan", "NaN", "", "—"):
+        if s in ("nan", "NaN", "", "—", "NA"):
             return "NA", "NA"
         if "\n" in s:
             top, bot = s.split("\n", 1)
@@ -1661,7 +1664,7 @@ def plot_metrics_table(summary_df, save_path):
     # Use blank placeholders for colLabels — real multi-line text set manually after table creation
     columns = ["Metric"] + [" "] * (n_models * 2)
 
-    fig_width = max(38, 7 + n_models * 8.5)
+    fig_width = max(44, 8 + n_models * 9.5)
     fig, ax = plt.subplots(figsize=(fig_width, 14))
     ax.axis("off")
 
@@ -1705,13 +1708,22 @@ def plot_metrics_table(summary_df, save_path):
             cell.set_facecolor("#F7F7F7" if col == 0 else "#FFFFFF")
             cell.set_height(0.095)
 
+    # Abbreviated header names that fit at large font size in matplotlib table cells
+    ABBREV = {
+        "Logistic Regression L2": "Log. Reg. L2",
+        "XGBoost":                "XGBoost",
+        "Baseline":               "Baseline",
+        "SLEDAI-only":            "SLEDAI-only",
+    }
+
     # Set header text manually so \n renders as a real newline in the cell
     tbl[0, 0].get_text().set_text("Metric")
     for i, name in enumerate(model_display_names):
         mean_col   = 1 + i * 2
         median_col = 2 + i * 2
-        tbl[0, mean_col].get_text().set_text(f"{name}\nMean \u00b1 SD")
-        tbl[0, median_col].get_text().set_text(f"{name}\nMedian")
+        short = ABBREV.get(name, name)
+        tbl[0, mean_col].get_text().set_text(f"{short}\nMean \u00b1 SD")
+        tbl[0, median_col].get_text().set_text(f"{short}\nMedian")
         for c in (mean_col, median_col):
             tbl[0, c].get_text().set_fontsize(header_fs)
             tbl[0, c].get_text().set_fontweight("bold")
@@ -1732,7 +1744,7 @@ def plot_metrics_table(summary_df, save_path):
 
     plt.tight_layout(rect=[0, 0, 1, 0.98])
     fig.savefig(save_path, dpi=600, bbox_inches="tight")
-    plt.close()
+    plt.close('all')
 
 
 def plot_per_fold_metrics_stacked(supp_df, save_path):
@@ -1859,7 +1871,7 @@ def plot_per_fold_metrics_stacked(supp_df, save_path):
         _render_table(ax, model_name)
     plt.tight_layout(rect=[0, 0, 1, 0.985], h_pad=0.35)
     plt.savefig(save_path, dpi=600, bbox_inches="tight")
-    plt.close()
+    plt.close('all')
 
 
 # Permutation sanity check plotting
@@ -1953,7 +1965,7 @@ def plot_permutation_table_top_bottom(perm_df, save_path):
 
     plt.tight_layout(rect=[0, 0, 1, 0.965], h_pad=2.8)
     plt.savefig(save_path, dpi=600, bbox_inches="tight")
-    plt.close()
+    plt.close('all')
 
 
 # =============================================================================
@@ -2026,7 +2038,7 @@ def plot_pr_auc_curves_side_by_side(run_store, fold_ids, save_path):
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=600, bbox_inches="tight")
-    plt.close()
+    plt.close('all')
     return save_path
 
 
@@ -2062,7 +2074,7 @@ def plot_shap_bar_side_by_side(lr_shap_df, xgb_shap_df, save_path):
 
     plt.subplots_adjust(left=0.16, right=0.97, top=0.92, bottom=0.06, hspace=0.15)
     plt.savefig(save_path, dpi=600, bbox_inches="tight")
-    plt.close()
+    plt.close('all')
     return save_path
 
 
@@ -2243,7 +2255,7 @@ def plot_beeswarm_side_by_side(run_store, lr_gene_labels, xgb_gene_labels, save_
 
     plt.tight_layout(rect=[0, 0, 1, 0.97], h_pad=3.0)
     plt.savefig(save_path, dpi=600, bbox_inches="tight")
-    plt.close()
+    plt.close('all')
     return save_path
 
 
@@ -2323,7 +2335,7 @@ def plot_correct_oof_genes_side_by_side(lr_df, xgb_df, save_path):
     _render_table(axes[1], xgb_df, get_model_display_name("XGB"))
     plt.tight_layout(rect=[0, 0, 1, 0.975], h_pad=3.5)
     plt.savefig(save_path, dpi=600, bbox_inches="tight")
-    plt.close()
+    plt.close('all')
     return save_path
 
 
