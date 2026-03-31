@@ -3368,7 +3368,6 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
         best_gene_expression_model_name=best_gene_expression_model_name,
     )
 
-
 def _is_jupyter() -> bool:
     try:
         from IPython import get_ipython
