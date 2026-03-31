@@ -17,6 +17,7 @@
 # - optional permutation-label sanity checks
 # =========================================================
 
+
 import os
 import re
 import io
@@ -58,7 +59,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 plt.ioff()  # disable interactive display — prevents inline rendering in Colab
-
 
 import sklearn
 from sklearn.linear_model import LogisticRegression
@@ -1542,7 +1542,7 @@ def plot_two_tables_side_by_side_with_gap(
         )
 
     plt.tight_layout(rect=[0, 0, 1, 0.965], pad=0.6, w_pad=1.2)
-    plt.savefig(save_path, dpi=600, bbox_inches="tight")
+    plt.savefig(save_path, dpi=250, bbox_inches="tight")
     plt.close('all')
 
 
@@ -1611,7 +1611,7 @@ def plot_confusion_matrices_one_model(all_cms, fold_ids, model_name, save_path):
         cbar_ax.axis("off")
 
     plt.subplots_adjust(left=0.08, right=0.89, top=0.90, bottom=0.10, hspace=0.42, wspace=0.30)
-    plt.savefig(save_path, dpi=600, bbox_inches="tight")
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close('all')
 
 
@@ -1743,7 +1743,7 @@ def plot_metrics_table(summary_df, save_path):
     )
 
     plt.tight_layout(rect=[0, 0, 1, 0.98])
-    fig.savefig(save_path, dpi=600, bbox_inches="tight")
+    fig.savefig(save_path, dpi=250, bbox_inches="tight")
     plt.close('all')
 
 
@@ -1836,7 +1836,7 @@ def plot_per_fold_metrics_stacked(supp_df, save_path):
         )
 
         tbl.auto_set_font_size(False)
-        tbl.set_fontsize(18)
+        tbl.set_fontsize(14)
         tbl.scale(1.25, 1.6)
 
         for (row, col), cell in tbl.get_celld().items():
@@ -1844,10 +1844,10 @@ def plot_per_fold_metrics_stacked(supp_df, save_path):
             cell.set_edgecolor("gray")
             cell.set_text_props(ha="center", va="center", wrap=True)
             if row == 0:
-                cell.set_text_props(weight="bold", fontsize=18)
+                cell.set_text_props(weight="bold", fontsize=15)
                 cell.set_facecolor("#EEEEEE")
             else:
-                cell.set_text_props(fontsize=18)
+                cell.set_text_props(fontsize=14)
                 cell.set_facecolor("#F7F7F7" if col == 0 else "#FFFFFF")
 
         _set_row_heights(tbl, df_model)
@@ -1855,11 +1855,11 @@ def plot_per_fold_metrics_stacked(supp_df, save_path):
         ax.text(
             0.5, 0.92, model_name,
             ha="center", va="bottom",
-            fontsize=26, fontweight="bold",
+            fontsize=22, fontweight="bold",
             transform=ax.transAxes,
         )
 
-    fig_height = max(12.0, 0.60 * len(metric_order) + 4.0)
+    fig_height = min(20, max(10.0, 0.50 * len(metric_order) + 3.0))
     fig, axes  = plt.subplots(len(models), 1, figsize=(18, 4.8 * len(models)))
     if len(models) == 1:
         axes = [axes]
@@ -1870,7 +1870,7 @@ def plot_per_fold_metrics_stacked(supp_df, save_path):
     for ax, model_name in zip(axes, models):
         _render_table(ax, model_name)
     plt.tight_layout(rect=[0, 0, 1, 0.985], h_pad=0.35)
-    plt.savefig(save_path, dpi=600, bbox_inches="tight")
+    plt.savefig(save_path, dpi=250, bbox_inches="tight")
     plt.close('all')
 
 
@@ -1964,7 +1964,7 @@ def plot_permutation_table_top_bottom(perm_df, save_path):
             ax.set_title(get_model_display_name(model_name), fontsize=34, fontweight="bold", pad=12)
 
     plt.tight_layout(rect=[0, 0, 1, 0.965], h_pad=2.8)
-    plt.savefig(save_path, dpi=600, bbox_inches="tight")
+    plt.savefig(save_path, dpi=250, bbox_inches="tight")
     plt.close('all')
 
 
@@ -2037,7 +2037,7 @@ def plot_pr_auc_curves_side_by_side(run_store, fold_ids, save_path):
     )
 
     plt.tight_layout()
-    plt.savefig(save_path, dpi=600, bbox_inches="tight")
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close('all')
     return save_path
 
@@ -2073,7 +2073,7 @@ def plot_shap_bar_side_by_side(lr_shap_df, xgb_shap_df, save_path):
         ax.set_title(get_model_display_name(model_name), fontsize=SUBPLOT_TITLE_SIZE, fontweight="bold")
 
     plt.subplots_adjust(left=0.16, right=0.97, top=0.92, bottom=0.06, hspace=0.15)
-    plt.savefig(save_path, dpi=600, bbox_inches="tight")
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close('all')
     return save_path
 
@@ -2254,7 +2254,7 @@ def plot_beeswarm_side_by_side(run_store, lr_gene_labels, xgb_gene_labels, save_
                     extra_ax.set_ylabel(extra_ax.get_ylabel(), fontsize=20)
 
     plt.tight_layout(rect=[0, 0, 1, 0.97], h_pad=3.0)
-    plt.savefig(save_path, dpi=600, bbox_inches="tight")
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close('all')
     return save_path
 
@@ -2334,7 +2334,7 @@ def plot_correct_oof_genes_side_by_side(lr_df, xgb_df, save_path):
     _render_table(axes[0], lr_df,  get_model_display_name("LR_L2"))
     _render_table(axes[1], xgb_df, get_model_display_name("XGB"))
     plt.tight_layout(rect=[0, 0, 1, 0.975], h_pad=3.5)
-    plt.savefig(save_path, dpi=600, bbox_inches="tight")
+    plt.savefig(save_path, dpi=250, bbox_inches="tight")
     plt.close('all')
     return save_path
 
@@ -3364,7 +3364,6 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
         sledai_col=sledai_col,
         best_gene_expression_model_name=best_gene_expression_model_name,
     )
-
 
 def _is_jupyter() -> bool:
     try:
