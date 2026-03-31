@@ -17,7 +17,6 @@
 # - optional permutation-label sanity checks
 # =========================================================
 
-
 import os
 import re
 import io
@@ -1664,8 +1663,12 @@ def plot_metrics_table(summary_df, save_path):
     # Use blank placeholders for colLabels — real multi-line text set manually after table creation
     columns = ["Metric"] + [" "] * (n_models * 2)
 
+    n_data_rows = len(data)
+    fig_width  = max(32, 8 + n_models * 7.5)
+    fig_height = max(14, 0.9 * n_data_rows + 5)
+
     fig_width = max(44, 8 + n_models * 9.5)
-    fig, ax = plt.subplots(figsize=(fig_width, 14))
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     ax.axis("off")
 
     metric_w = 0.13
@@ -1685,11 +1688,11 @@ def plot_metrics_table(summary_df, save_path):
     )
 
     tbl.auto_set_font_size(False)
-    body_fs = 25
-    header_fs = 25
-    tbl.set_fontsize(body_fs)
+    body_fs   = 18
+    header_fs = 19
+    tbl.set_fontsize(21)
 
-    tbl.scale(1.25, 2.6)
+    tbl.scale(1.1, 1.5)
 
     n_cols = len(columns)
 
@@ -1702,11 +1705,11 @@ def plot_metrics_table(summary_df, save_path):
         if row == 0:
             cell.set_text_props(weight="bold", fontsize=header_fs)
             cell.set_facecolor("#EEEEEE")
-            cell.set_height(0.22)
+            cell.set_height(0.16)
         else:
             cell.set_text_props(fontsize=body_fs)
             cell.set_facecolor("#F7F7F7" if col == 0 else "#FFFFFF")
-            cell.set_height(0.095)
+            cell.set_height(0.082)
 
     # Abbreviated header names that fit at large font size in matplotlib table cells
     ABBREV = {
@@ -3364,6 +3367,7 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
         sledai_col=sledai_col,
         best_gene_expression_model_name=best_gene_expression_model_name,
     )
+
 
 def _is_jupyter() -> bool:
     try:
