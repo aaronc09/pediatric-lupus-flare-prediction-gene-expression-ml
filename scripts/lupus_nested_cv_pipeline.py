@@ -4,8 +4,7 @@
 # File: lupus_nested_cv_pipeline.py
 #
 # Nested cross-validation pipeline for predicting pre-flare
-# states in pediatric SLE using gene-expression data,
-# plus baseline and SLEDAI-only comparators.
+# states in pediatric SLE using gene-expression data.
 #
 # Main components:
 # - subject-level grouped nested cross-validation
@@ -14,8 +13,10 @@
 # - prevalence baseline comparator
 # - SLEDAI-only logistic regression comparator
 # - SHAP analysis for gene-expression models
-# - optional permutation-label sanity checks
+# - permutation-label sanity checks
 # =========================================================
+
+from __future__ import annotations
 
 import os
 import re
@@ -51,14 +52,11 @@ warnings.filterwarnings(
 
 import numpy as np
 import pandas as pd
-
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
-
-plt.ioff()  # disable interactive display — prevents inline rendering in Colab
-
+plt.ioff() 
 import sklearn
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
@@ -138,7 +136,7 @@ SHAP_EVAL_MAX = 400
 
 RUN_PERMUTATION_CHECK     = True
 N_PERMUTATION_OUTER_FOLDS = N_OUTER_FOLDS
-PERM_N_TRIALS_LR          = 20
+PERM_N_TRIALS_LR          = 20  
 PERM_N_TRIALS_XGB         = 25
 
 CLASS_NAMES_CODE    = ["non_pre_flare", "pre_flare"]
@@ -176,14 +174,14 @@ TABLE_BODY_FONTSIZE   = 20
 TABLE_HEADER_FONTSIZE = 20
 TABLE_TITLE_FONTSIZE  = 32
 
-FIG_TITLE_SIZE     = 40
-SUBPLOT_TITLE_SIZE = 32
+FIG_TITLE_SIZE     = 42
+SUBPLOT_TITLE_SIZE = 28
 AXIS_LABEL_SIZE    = 22
 TICK_LABEL_SIZE    = 20
 VALUE_LABEL_SIZE   = 18
 LEGEND_SIZE        = 16
 
-GENERATE_FIGURES = True  # If False, skip all PNG figures and only save CSV/log outputs
+DISPLAY_FIGURES_IN_NOTEBOOK = False  # If True, display figures inline in Jupyter/Colab
 
 
 def _make_output_dirs(base: str) -> dict:
@@ -210,27 +208,21 @@ def clear_old_png_files(figures_dir: str) -> None:
                 logger.warning("Could not delete old figure file: %s", fpath)
 
 
-def maybe_make_figure(fig_path: str | None, plot_func, *args, **kwargs):
-    """Run a plotting function only when figure generation is enabled."""
-    if not GENERATE_FIGURES:
-        return None
+def make_and_save_figure(fig_path: str | None, plot_func, *args, **kwargs):
     plot_func(*args, **kwargs)
-    return fig_path if fig_path is not None and os.path.exists(fig_path) else None
+    if fig_path is not None and os.path.exists(fig_path):
+        return fig_path
+    return None
 
-
-# Basic helper functions
 def seed_everything(seed: int) -> None:
     os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
 
-
 seed_everything(GLOBAL_SEED)
-
 
 def get_model_display_name(model_name: str) -> str:
     return MODEL_DISPLAY_NAMES.get(model_name, model_name)
-
 
 def round_numeric_df(df: pd.DataFrame, decimals: int = 2) -> pd.DataFrame:
     out = df.copy()
@@ -784,6 +776,32 @@ def _make_inner_cv(seed: int):
     return GroupKFold(n_splits=N_INNER_FOLDS), False
 
 
+def check_inner_cv_feasibility(y_train: pd.Series, g_train: pd.Series, n_splits: int, context: str = "") -> None:
+    """
+    Make sure the current outer-training split can support grouped inner CV.
+    """
+    n_subjects   = g_train.nunique()
+    pos_subjects = g_train[y_train == 1].nunique()
+    neg_subjects = g_train[y_train == 0].nunique()
+
+    errors = []
+    if n_subjects < n_splits:
+        errors.append(f"subjects={n_subjects} < n_splits={n_splits}")
+    if pos_subjects < n_splits:
+        errors.append(f"pre-flare subjects={pos_subjects} < n_splits={n_splits}")
+    if neg_subjects < n_splits:
+        errors.append(f"non-pre-flare subjects={neg_subjects} < n_splits={n_splits}")
+
+    if errors:
+        prefix = f"{context}: " if context else ""
+        raise ValueError(
+            prefix
+            + "Inner CV infeasible for this outer-training split. "
+            + "; ".join(errors)
+            + ". Reduce N_INNER_FOLDS or use a fallback CV strategy."
+        )
+
+
 # Inner-fold checks, caching, and scoring
 def _log_fold_class_counts(split_label: str, y_arr: np.ndarray, fold_idx: int) -> bool:
     n_pos        = int((y_arr == 1).sum())
@@ -966,6 +984,8 @@ def tune_lr_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=Non
     best_contributed = np.array(study.best_trial.user_attrs["contributed"])
     y_np             = y_train.values
 
+    # Threshold is selected from inner OOF predictions by maximizing F1.
+    # This threshold is then fixed before evaluation on the outer test fold.
     if best_contributed.sum() >= 2 and len(np.unique(y_np[best_contributed])) >= 2:
         best_threshold, _ = choose_threshold_max_f1(y_np[best_contributed], best_oof_probs[best_contributed])
     else:
@@ -990,7 +1010,7 @@ def tune_xgb_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=No
     if fold_cache is None:
         fold_cache = build_inner_fold_cache(X_train, y_train, g_train, seed)
 
-    # MedianPruner for XGB only
+    # Use MedianPruner for XGBoost trials only.
     study = optuna.create_study(
         direction="maximize",
         sampler=TPESampler(seed=seed),
@@ -1027,6 +1047,8 @@ def tune_xgb_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=No
     best_contributed = np.array(study.best_trial.user_attrs["contributed"])
     y_np             = y_train.values
 
+    # Threshold is selected from inner OOF predictions by maximizing F1.
+    # This threshold is then fixed before evaluation on the outer test fold.
     if best_contributed.sum() >= 2 and len(np.unique(y_np[best_contributed])) >= 2:
         best_threshold, _ = choose_threshold_max_f1(y_np[best_contributed], best_oof_probs[best_contributed])
     else:
@@ -1156,9 +1178,9 @@ def evaluate_baseline_on_outer_test(y_train, y_test):
     """
     Constant-probability prevalence baseline.
 
-    Each test sample is assigned the same predicted probability,
-    equal to the pre-flare prevalence in the outer-training split.
-    The classification threshold is fixed at 0.5 (not tuned).
+    Each test sample receives the same predicted probability, equal to the
+    pre-flare prevalence in the outer-training split. This is a deterministic
+    prevalence baseline, not a random classifier.
     """
     ytr = np.asarray(y_train).astype(int)
     yte = np.asarray(y_test).astype(int)
@@ -1184,6 +1206,8 @@ def median_impute_train_test(train_df, test_df):
     medians = train_df.median(axis=0)
     train_df = train_df.fillna(medians)
     test_df = test_df.fillna(medians)
+    train_df = train_df.fillna(0.0)
+    test_df = test_df.fillna(0.0)
     return train_df, test_df, medians
 
 
@@ -1204,15 +1228,12 @@ def tune_sledai_only_model(X_train_sledai, y_train, g_train, seed, c_grid=None):
     if len(np.unique(ytr)) < 2:
         return None, None, None, 0.5, np.nan
 
-    n_subjects   = pd.Series(gtr).nunique()
-    pos_subjects = pd.Series(gtr[ytr == 1]).nunique()
-    neg_subjects = pd.Series(gtr[ytr == 0]).nunique()
-
-    if n_subjects < N_INNER_FOLDS or pos_subjects < N_INNER_FOLDS or neg_subjects < N_INNER_FOLDS:
-        logger.warning(
-            "SLEDAI-only inner CV may be unstable: subjects=%d, pre-flare subjects=%d, non-pre-flare subjects=%d",
-            n_subjects, pos_subjects, neg_subjects,
-        )
+    check_inner_cv_feasibility(
+        y_train=pd.Series(ytr),
+        g_train=pd.Series(gtr),
+        n_splits=N_INNER_FOLDS,
+        context="SLEDAI-only inner CV"
+    )
 
     inner_cv, _ = _make_inner_cv(seed)
 
@@ -1302,6 +1323,9 @@ def evaluate_sledai_only_model(X_train_sledai, X_test_sledai, y_train, y_test, g
         best_oof_pr = np.nan
 
     Xtr_df_imp, Xte_df_imp, _ = median_impute_train_test(Xtr_df, Xte_df)
+
+    if Xtr_df_imp.isna().any().any() or Xte_df_imp.isna().any().any():
+        raise ValueError("NaNs remain in SLEDAI data after imputation.")
 
     final_scaler = StandardScaler()
     Xtr_s = final_scaler.fit_transform(Xtr_df_imp.values)
@@ -1512,10 +1536,10 @@ def draw_single_table(
         tbl, df_disp, base_height=body_base_height,
         header_base_height=header_base_height, header_extra_per_line=0.055,
     )
-    ax.set_title(title, fontsize=title_fontsize, fontweight="bold", pad=4)
+    ax.set_title(title, fontsize=title_fontsize, fontweight="bold", pad=2)
 
 
-def plot_two_tables_side_by_side_with_gap(
+def plot_two_tables(
     df_left, title_left, df_right, title_right, save_path, fig_title=None
 ):
     n_rows     = max(len(df_left), len(df_right), 1)
@@ -1529,7 +1553,7 @@ def plot_two_tables_side_by_side_with_gap(
     ax_gap.axis("off")
 
     if fig_title is not None:
-        fig.suptitle(fig_title, fontsize=48, fontweight="bold", y=0.99)
+        fig.suptitle(fig_title, fontsize=FIG_TITLE_SIZE, fontweight="bold", y=0.99)
 
     for ax, df, title in [(ax_left, df_left, title_left), (ax_right, df_right, title_right)]:
         df = round_numeric_df(df, 2)
@@ -1542,7 +1566,7 @@ def plot_two_tables_side_by_side_with_gap(
 
     plt.tight_layout(rect=[0, 0, 1, 0.965], pad=0.6, w_pad=1.2)
     plt.savefig(save_path, dpi=250, bbox_inches="tight")
-    plt.close('all')
+    plt.close(fig)
 
 
 def plot_confusion_matrices_one_model(all_cms, fold_ids, model_name, save_path):
@@ -1565,7 +1589,7 @@ def plot_confusion_matrices_one_model(all_cms, fold_ids, model_name, save_path):
     axes = np.array(axes).reshape(n_rows, n_cols)
     fig.suptitle(
         f"Confusion Matrices Across Held-Out Outer Test Folds\n{get_model_display_name(model_name)}",
-        fontsize=38, fontweight="bold", y=0.98,
+        fontsize=FIG_TITLE_SIZE, fontweight="bold", y=0.98,
     )
 
     cbar_ax    = fig.add_axes([0.92, 0.18, 0.022, 0.62])
@@ -1611,7 +1635,7 @@ def plot_confusion_matrices_one_model(all_cms, fold_ids, model_name, save_path):
 
     plt.subplots_adjust(left=0.08, right=0.89, top=0.90, bottom=0.10, hspace=0.42, wspace=0.30)
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    plt.close('all')
+    plt.close(fig)
 
 
 def plot_metrics_table(summary_df, save_path):
@@ -1664,14 +1688,13 @@ def plot_metrics_table(summary_df, save_path):
     columns = ["Metric"] + [" "] * (n_models * 2)
 
     n_data_rows = len(data)
-    fig_width  = max(32, 8 + n_models * 7.5)
-    fig_height = max(14, 0.9 * n_data_rows + 5)
+    fig_width  = min(22, 5 + n_models * 4.2)
+    fig_height = max(10, 0.7 * n_data_rows + 4)
 
-    fig_width = max(44, 8 + n_models * 9.5)
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     ax.axis("off")
 
-    metric_w = 0.13
+    metric_w = 0.16
     pair_w = (1.0 - metric_w) / max(n_models, 1)
     col_widths = [metric_w]
     for _ in model_display_names:
@@ -1688,8 +1711,8 @@ def plot_metrics_table(summary_df, save_path):
     )
 
     tbl.auto_set_font_size(False)
-    body_fs   = 18
-    header_fs = 19
+    body_fs   = 21
+    header_fs = 21
     tbl.set_fontsize(21)
 
     tbl.scale(1.1, 1.5)
@@ -1705,18 +1728,21 @@ def plot_metrics_table(summary_df, save_path):
         if row == 0:
             cell.set_text_props(weight="bold", fontsize=header_fs)
             cell.set_facecolor("#EEEEEE")
-            cell.set_height(0.16)
+            cell.set_height(0.26)
         else:
-            cell.set_text_props(fontsize=body_fs)
+            if col == 0:
+                cell.set_text_props(weight="bold", fontsize=body_fs)
+            else:
+                cell.set_text_props(fontsize=body_fs)
             cell.set_facecolor("#F7F7F7" if col == 0 else "#FFFFFF")
             cell.set_height(0.082)
 
-    # Abbreviated header names that fit at large font size in matplotlib table cells
+    # Abbreviated header names — split across 3 lines so text wraps inside narrow cells
     ABBREV = {
-        "Logistic Regression L2": "Log. Reg. L2",
-        "XGBoost":                "XGBoost",
-        "Baseline":               "Baseline",
-        "SLEDAI-only":            "SLEDAI-only",
+        "Logistic Regression L2": "LR (L2)",
+        "XGBoost":                "XGB",
+        "Prevalence baseline":    "Baseline",
+        "SLEDAI-only":            "SLEDAI",
     }
 
     # Set header text manually so \n renders as a real newline in the cell
@@ -1725,7 +1751,7 @@ def plot_metrics_table(summary_df, save_path):
         mean_col   = 1 + i * 2
         median_col = 2 + i * 2
         short = ABBREV.get(name, name)
-        tbl[0, mean_col].get_text().set_text(f"{short}\nMean \u00b1 SD")
+        tbl[0, mean_col].get_text().set_text(f"{short}\nMean\n\u00b1 SD")
         tbl[0, median_col].get_text().set_text(f"{short}\nMedian")
         for c in (mean_col, median_col):
             tbl[0, c].get_text().set_fontsize(header_fs)
@@ -1738,19 +1764,24 @@ def plot_metrics_table(summary_df, save_path):
     tbl[0, 0].get_text().set_va("center")
     tbl[0, 0].get_text().set_ha("center")
 
+    # Increase header row height to fit 3 lines of text
+    for c in range(len(columns)):
+        if (0, c) in tbl.get_celld():
+            tbl[0, c].set_height(0.26)
+
     ax.set_title(
-        "Average Classification Metrics Across Held-Out Outer Test Folds",
-        fontsize=44,
+        "Average Classification Metrics Across Outer Test Folds",
+        fontsize=FIG_TITLE_SIZE,
         fontweight="bold",
         pad=6,
     )
 
     plt.tight_layout(rect=[0, 0, 1, 0.98])
     fig.savefig(save_path, dpi=250, bbox_inches="tight")
-    plt.close('all')
+    plt.close(fig)
 
 
-def plot_per_fold_metrics_stacked(supp_df, save_path):
+def plot_per_fold_metrics(supp_df, save_path):
     """
     Plot per-fold held-out test metrics for all models.
     Gene-expression models are shown first, followed by comparator models.
@@ -1801,7 +1832,6 @@ def plot_per_fold_metrics_stacked(supp_df, save_path):
             for fold_id in fold_ids:
                 tmp = sub[sub["Outer Fold"] == fold_id]
                 val = ""
-                # Show undefined metrics as "NA" only at display time, after numeric processing is complete.
                 if not tmp.empty:
                     v = tmp.iloc[0][metric]
                     if pd.notna(v):
@@ -1862,26 +1892,26 @@ def plot_per_fold_metrics_stacked(supp_df, save_path):
             transform=ax.transAxes,
         )
 
-    fig_height = min(20, max(10.0, 0.50 * len(metric_order) + 3.0))
+    fig_height = max(10.0, 0.50 * len(metric_order) + 3.0)
     fig, axes  = plt.subplots(len(models), 1, figsize=(18, 4.8 * len(models)))
     if len(models) == 1:
         axes = [axes]
     fig.suptitle(
         "Per-Fold Held-Out Test Metrics Across Outer Folds",
-        fontsize=34, fontweight="bold", y=0.995,
+        fontsize=FIG_TITLE_SIZE, fontweight="bold", y=0.995,
     )
     for ax, model_name in zip(axes, models):
         _render_table(ax, model_name)
     plt.tight_layout(rect=[0, 0, 1, 0.985], h_pad=0.35)
     plt.savefig(save_path, dpi=250, bbox_inches="tight")
-    plt.close('all')
+    plt.close(fig)
 
 
 # Permutation sanity check plotting
 def plot_permutation_table_top_bottom(perm_df, save_path):
     """
-    Plot permutation-label sanity check results as two stacked tables
-    (LR_L2 on top and XGB on bottom), with metrics as rows and folds as columns.
+    Plot permutation-label sanity check results as two tables
+    (LR_L2 above XGB), with metrics as rows and folds as columns.
     """
     perm_df = round_numeric_df(perm_df, 2)
     METRIC_DISPLAY = {
@@ -1955,7 +1985,7 @@ def plot_permutation_table_top_bottom(perm_df, save_path):
     fig, axes  = plt.subplots(2, 1, figsize=(20, fig_height * 1.15))
     fig.suptitle(
         "Permutation-Label Sanity Check Across Held-Out Outer Folds",
-        fontsize=42, fontweight="bold", y=0.995,
+        fontsize=FIG_TITLE_SIZE, fontweight="bold", y=0.995,
     )
 
     for ax, model_name in zip(axes, ["LR_L2", "XGB"]):
@@ -1968,13 +1998,14 @@ def plot_permutation_table_top_bottom(perm_df, save_path):
 
     plt.tight_layout(rect=[0, 0, 1, 0.965], h_pad=2.8)
     plt.savefig(save_path, dpi=250, bbox_inches="tight")
-    plt.close('all')
+    plt.close(fig)
 
 
 # =============================================================================
 # PR-curve and SHAP analysis
 # =============================================================================
 def _draw_pr_auc_on_ax(ax, run_store, model_name, fold_ids):
+    all_y_true = []
     for fold_id in fold_ids:
         key = (fold_id, model_name)
         if key not in run_store:
@@ -1984,13 +2015,17 @@ def _draw_pr_auc_on_ax(ax, run_store, model_name, fold_ids):
         precision, recall, _ = precision_recall_curve(y_test.values, probs)
         pr_auc = average_precision_score(y_test.values, probs)
         ax.plot(recall, precision, linewidth=2, label=f"Fold {fold_id} (PR-AUC={pr_auc:.2f})")
+        all_y_true.extend(y_test.values.tolist())
 
-    positive_rates = [
-        run_store[(fid, model_name)]["y_test"].mean()
-        for fid in fold_ids if (fid, model_name) in run_store
-    ]
-    baseline = float(np.mean(positive_rates)) if positive_rates else 0.5
-    ax.axhline(y=baseline, linestyle="--", linewidth=1.5, label=f"Baseline={baseline:.2f}")
+    if all_y_true:
+        prevalence = float(np.mean(all_y_true))
+        ax.axhline(
+            y=prevalence,
+            linestyle="--",
+            linewidth=1.5,
+            label=f"Baseline (Prevalence = {prevalence:.2f})",
+        )
+
     ax.set_xlabel("Recall",    fontsize=AXIS_LABEL_SIZE)
     ax.set_ylabel("Precision", fontsize=AXIS_LABEL_SIZE)
     ax.set_title(get_model_display_name(model_name), fontsize=SUBPLOT_TITLE_SIZE, fontweight="bold")
@@ -1999,39 +2034,38 @@ def _draw_pr_auc_on_ax(ax, run_store, model_name, fold_ids):
     ax.grid(alpha=0.25)
 
 
-def plot_pr_auc_curves_side_by_side(run_store, fold_ids, save_path):
+def plot_pr_auc_curves(run_store, fold_ids, save_path):
     """
-    Plot held-out outer-test precision-recall curves for all models.
+    Plot held-out outer-test precision-recall curves for the selected models.
 
     Layout:
         top-left: LR_L2
         top-right: XGB
-        bottom-left: BASELINE
-        bottom-right: SLEDAI_ONLY
+        bottom-left: SLEDAI_ONLY
+        bottom-right: empty
     """
-    models_to_plot = [m for m in ALL_REPORT_MODEL_NAMES if any((fid, m) in run_store for fid in fold_ids)]
+    # Plot PR curves for LR_L2, XGB, and SLEDAI_ONLY.
+    models_to_plot = [m for m in MODEL_NAMES + ["SLEDAI_ONLY"] if any((fid, m) in run_store for fid in fold_ids)]
 
     if len(models_to_plot) == 0:
         logger.warning("No PR-curve data available.")
-        return save_path
+        return None
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
     ax_map = {
         "LR_L2":       axes[0, 0],
         "XGB":         axes[0, 1],
-        "BASELINE":    axes[1, 0],
-        "SLEDAI_ONLY": axes[1, 1],
+        "SLEDAI_ONLY": axes[1, 0],
     }
+
+    # Leave the lower-right panel empty to preserve the 2x2 layout.
+    axes[1, 1].axis("off")
 
     for model_name in models_to_plot:
         ax = ax_map.get(model_name)
         if ax is not None:
             _draw_pr_auc_on_ax(ax, run_store, model_name, fold_ids)
-
-    for model_name, ax in ax_map.items():
-        if model_name not in models_to_plot:
-            ax.axis("off")
 
     fig.suptitle(
         "Precision-Recall Curves Across Held-Out Outer Test Folds",
@@ -2041,11 +2075,11 @@ def plot_pr_auc_curves_side_by_side(run_store, fold_ids, save_path):
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    plt.close('all')
+    plt.close(fig)
     return save_path
 
 
-def plot_shap_bar_side_by_side(lr_shap_df, xgb_shap_df, save_path):
+def plot_shap_bar(lr_shap_df, xgb_shap_df, save_path):
     fig, axes = plt.subplots(2, 1, figsize=(18, max(16, 0.85 * TOP_K + 8)))
     fig.suptitle(
         "Top 20 Influential Genes by Mean |SHAP| Across Models and Outer Training Folds",
@@ -2077,7 +2111,7 @@ def plot_shap_bar_side_by_side(lr_shap_df, xgb_shap_df, save_path):
 
     plt.subplots_adjust(left=0.16, right=0.97, top=0.92, bottom=0.06, hspace=0.15)
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    plt.close('all')
+    plt.close(fig)
     return save_path
 
 
@@ -2112,9 +2146,9 @@ def infer_direction(x, s):
     if np.isnan(corr):
         return "unclear"
     if corr > 0:
-        return f"Higher expression -> more associated with {POSITIVE_CLASS_NAME}"
+        return "Higher → pre-flare"
     if corr < 0:
-        return f"Higher expression -> more associated with {NEGATIVE_CLASS_NAME}"
+        return "Higher → non-pre-flare"
     return "unclear"
 
 
@@ -2205,11 +2239,11 @@ def aggregate_global_shap_genes_across_outer_folds(run_store, model_name, gene_n
     return agg_df
 
 
-def plot_beeswarm_side_by_side(run_store, lr_gene_labels, xgb_gene_labels, save_path):
-    fig, axes = plt.subplots(2, 1, figsize=(18, 18))
+def plot_beeswarm(run_store, lr_gene_labels, xgb_gene_labels, save_path):
+    fig, axes = plt.subplots(2, 1, figsize=(18, 20))
     fig.suptitle(
         "SHAP Beeswarm Plot of Top 20 Influential Genes Across Models and Outer Training Folds",
-        fontsize=48, fontweight="bold", y=1.02,
+        fontsize=FIG_TITLE_SIZE, fontweight="bold", y=0.98,
     )
     for ax, model_name, gene_labels in zip(axes, ["LR_L2", "XGB"], [lr_gene_labels, xgb_gene_labels]):
         shap_blocks    = []
@@ -2256,13 +2290,13 @@ def plot_beeswarm_side_by_side(run_store, lr_gene_labels, xgb_gene_labels, save_
                 if extra_ax.get_ylabel():
                     extra_ax.set_ylabel(extra_ax.get_ylabel(), fontsize=20)
 
-    plt.tight_layout(rect=[0, 0, 1, 0.97], h_pad=3.0)
+    plt.tight_layout(rect=[0, 0, 1, 0.95], h_pad=3.0)
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    plt.close('all')
+    plt.close(fig)
     return save_path
 
 
-def plot_correct_oof_genes_side_by_side(lr_df, xgb_df, save_path):
+def plot_correct_oof_genes(lr_df, xgb_df, save_path):
     def _wrap_cell_text(val, width):
         if pd.isna(val):
             return ""
@@ -2277,20 +2311,24 @@ def plot_correct_oof_genes_side_by_side(lr_df, xgb_df, save_path):
         plot_df = plot_df.rename(columns={
             "Folds Appearing":            "Folds\nAppearing",
             "Stability Score":            "Stability\nScore",
-            "Mean |SHAP| (OOF Correct Train)": "Mean |SHAP|\n(OOF Correct\nTrain)",
+            "Mean |SHAP| (OOF Correct Train)": "Mean |SHAP|",
         })
-        if "Gene"      in plot_df.columns: plot_df["Gene"]      = plot_df["Gene"].apply(lambda x: _wrap_cell_text(x, 30))
-        if "Direction" in plot_df.columns: plot_df["Direction"] = plot_df["Direction"].apply(lambda x: _wrap_cell_text(x, 34))
+        if "Gene" in plot_df.columns:
+            plot_df["Gene"] = plot_df["Gene"].apply(lambda x: _wrap_cell_text(x, 24))
         return plot_df
 
     def _set_row_heights(tbl, df):
         ncols = len(df.columns)
+        header_max_lines = max(
+            str(df.columns[c]).count("\n") + 1 for c in range(ncols)
+        )
+        header_h = 0.10 + header_max_lines * 0.055
         for c in range(ncols):
             if (0, c) in tbl.get_celld():
-                tbl[(0, c)].set_height(0.20)
+                tbl[(0, c)].set_height(header_h)
         for r in range(len(df)):
             max_lines = max(str(df.iloc[r, c]).count("\n") + 1 for c in range(ncols))
-            row_h     = 0.068 + (max_lines - 1) * 0.036
+            row_h     = 0.080 + (max_lines - 1) * 0.065
             for c in range(ncols):
                 if (r + 1, c) in tbl.get_celld():
                     tbl[(r + 1, c)].set_height(row_h)
@@ -2299,46 +2337,46 @@ def plot_correct_oof_genes_side_by_side(lr_df, xgb_df, save_path):
         ax.axis("off")
         if df is None or df.empty:
             ax.text(0.5, 0.5, "No data", ha="center", va="center", fontsize=26, transform=ax.transAxes)
-            ax.set_title(title, fontsize=40, fontweight="bold", pad=14)
+            ax.set_title(title, fontsize=SUBPLOT_TITLE_SIZE, fontweight="bold", pad=8)
             return
         plot_df = _prepare_df(df)
         widths  = []
         for c in plot_df.columns:
-            if c == "Gene":               widths.append(0.30)
-            elif c == "Folds\nAppearing": widths.append(0.11)
-            elif c == "Stability\nScore": widths.append(0.11)
-            elif c == "Mean |SHAP|\n(OOF Correct\nTrain)": widths.append(0.15)
-            elif c == "Direction":        widths.append(0.33)
-            else:                         widths.append(0.14)
+            if c == "Gene":                              widths.append(0.26)
+            elif c == "Folds\nAppearing":                widths.append(0.09)
+            elif c == "Stability\nScore":                widths.append(0.09)
+            elif c == "Mean |SHAP|":                      widths.append(0.14)
+            elif c == "Direction":                       widths.append(0.42)
+            else:                                        widths.append(0.12)
         col_widths = [w / sum(widths) for w in widths]
         tbl = ax.table(
             cellText=plot_df.values.tolist(), colLabels=list(plot_df.columns),
-            cellLoc="center", colWidths=col_widths, bbox=[0, 0, 1, 0.95],
+            cellLoc="center", colWidths=col_widths, bbox=[0.01, 0.02, 0.98, 0.92],
         )
-        tbl.auto_set_font_size(False); tbl.set_fontsize(21)
+        tbl.auto_set_font_size(False); tbl.set_fontsize(14)
         for (row, col), cell in tbl.get_celld().items():
             cell.set_linewidth(0.7); cell.set_edgecolor("gray")
             cell.set_text_props(ha="center", va="center", wrap=True)
             if row == 0:
-                cell.set_text_props(weight="bold", fontsize=22)
+                cell.set_text_props(weight="bold", fontsize=14)
             else:
-                cell.set_text_props(fontsize=21)
+                cell.set_text_props(fontsize=13)
         _set_row_heights(tbl, plot_df)
-        ax.set_title(title, fontsize=40, fontweight="bold", pad=14)
+        ax.set_title(title, fontsize=SUBPLOT_TITLE_SIZE, fontweight="bold", pad=8)
 
     n_rows     = max(len(lr_df) if lr_df is not None and not lr_df.empty else 1,
                      len(xgb_df) if xgb_df is not None and not xgb_df.empty else 1)
-    fig_height = max(10.0, (0.068 + 0.036) * n_rows * 8.5 + 3.5) * 2 + 4.0
-    fig, axes  = plt.subplots(2, 1, figsize=(22, fig_height))
+    fig_height = max(9.5, 0.68 * n_rows + 3.8)
+    fig, axes  = plt.subplots(2, 1, figsize=(16.5, fig_height))
     fig.suptitle(
-        "Top 10 Genes Associated with Correct Inner-Validation Predictions\nAcross Outer Training Folds",
-        fontsize=44, fontweight="bold", y=0.995,
+        f"Top {TOP_K_CORRECT_OOF} Genes Associated with Correct Inner-Validation Predictions\nAcross Outer Training Folds",
+        fontsize=24, fontweight="bold", y=0.995,
     )
     _render_table(axes[0], lr_df,  get_model_display_name("LR_L2"))
     _render_table(axes[1], xgb_df, get_model_display_name("XGB"))
-    plt.tight_layout(rect=[0, 0, 1, 0.975], h_pad=3.5)
+    plt.tight_layout(rect=[0, 0, 1, 0.985], h_pad=2.2)
     plt.savefig(save_path, dpi=250, bbox_inches="tight")
-    plt.close('all')
+    plt.close(fig)
     return save_path
 
 
@@ -2496,6 +2534,9 @@ def run_permutation_sanity_check_on_outer_test_folds(outer_summaries):
 
         logger.info("Permutation check — outer fold %d (%d/%d)", fold_id, i, min(len(outer_summaries), N_PERMUTATION_OUTER_FOLDS))
 
+        # Permute outer-training labels only.
+        # The model is then evaluated against the real held-out test labels.
+        # This tests whether destroying training-label structure collapses performance.
         rng    = np.random.RandomState(fold_seed + 10000)
         y_perm = pd.Series(rng.permutation(y_train.values), index=y_train.index).astype(int)
 
@@ -2536,42 +2577,28 @@ def show_final_outputs_in_order(
     search_space_png, best_params_png,
     cm_lr_png, cm_xgb_png,
     metrics_png, permutation_png, per_fold_supp_png,
-    pr_curves_side_png=None, shap_bar_side_png=None,
-    beeswarm_side_png=None, correct_oof_side_png=None,
+    pr_curves_png=None, shap_bar_png=None,
+    beeswarm_png=None, correct_oof_png=None,
     output_dir=None,
 ):
-    if not _is_jupyter():
-        if output_dir:
-            logger.info("Outputs saved to: %s", output_dir)
-        return
-
-    import IPython.display as ipd
-
     ordered_paths = [
         ("1) Hyperparameter search space",                       search_space_png),
         ("2) Best hyperparameters selected for each outer fold", best_params_png),
         ("3a) Confusion matrices — Logistic Regression L2",      cm_lr_png),
         ("3b) Confusion matrices — XGBoost",                     cm_xgb_png),
         ("4) Per-fold held-out test metrics",                    per_fold_supp_png),
-        ("5) PR-AUC curves",                                     pr_curves_side_png),
+        ("5) PR-AUC curves",                                     pr_curves_png),
         ("6) Final average classification metrics",              metrics_png),
-        ("7) SHAP bar — LR L2 vs XGB",                           shap_bar_side_png),
-        ("8) SHAP beeswarm",                                     beeswarm_side_png),
-        ("9) Top 10 correct-OOF genes — LR L2 vs XGB",           correct_oof_side_png),
-        ("10) Permutation-label sanity check results",          permutation_png),
+        ("7) SHAP bar plots",                                   shap_bar_png),
+        ("8) SHAP beeswarm",                                     beeswarm_png),
+        (f"9) Top {TOP_K_CORRECT_OOF} correct-OOF genes",       correct_oof_png),
+        ("10) Permutation-label sanity check results",           permutation_png),
     ]
-    for title, path in ordered_paths:
-        if path is None:
-            continue
-        logger.info("=== %s ===", title)
-        if path is not None and os.path.exists(path):
-            ipd.display(ipd.HTML(f"<h4>{title}</h4>"))
-            ipd.display(ipd.Image(filename=path))
-        else:
-            logger.warning("Figure not available: %s", title)
 
     if output_dir:
-        logger.info("=== OUTPUTS SAVED TO: %s ===", output_dir)
+        logger.info("Outputs saved to: %s", output_dir)
+
+    return ordered_paths
 
 
 # Outer-fold preparation
@@ -2649,6 +2676,13 @@ def _run_one_outer_split(
         raise RuntimeError(f"Subject overlap in outer split {outer_idx}: {sorted(overlap)}")
     logger.info("Subject overlap check passed.")
 
+    check_inner_cv_feasibility(
+        y_train=y_train,
+        g_train=g_train,
+        n_splits=N_INNER_FOLDS,
+        context=f"Outer split {outer_idx}"
+    )
+
     logger.info("Building inner-fold cache for outer split %d...", outer_idx)
     fold_cache = build_inner_fold_cache(X_train, y_train, g_train, fold_seed)
     usable     = sum(f is not None for f in fold_cache)
@@ -2708,12 +2742,14 @@ def _run_one_outer_split(
             metrics["AUC-ROC"], metrics["F1"], metrics["OOF Coverage"] * 100, thr,
         )
 
-    # Comparator models for the current outer split
+    # Evaluate comparator models for this outer split:
+    #   1) prevalence baseline
+    #   2) SLEDAI-only logistic regression
 
     # -------------------------
-    # Baseline model
+    # Prevalence baseline
     # -------------------------
-    baseline_metrics, baseline_cm, baseline_probs, _, baseline_prev = evaluate_baseline_on_outer_test(
+    baseline_metrics, _, baseline_probs, _, baseline_prev = evaluate_baseline_on_outer_test(
         y_train=y_train,
         y_test=y_test,
     )
@@ -2741,7 +2777,6 @@ def _run_one_outer_split(
     }
     metrics_list.append(baseline_metrics_row)
 
-    # Baseline only needs test probabilities for PR-curve plotting.
     run_store_entries[(outer_idx, "BASELINE")] = {
         "test_probs": baseline_probs,
         "y_test": y_test.copy(),
@@ -2757,13 +2792,13 @@ def _run_one_outer_split(
     )
 
     # -------------------------
-    # SLEDAI-only model
+    # SLEDAI-only comparator
     # -------------------------
     if X_sledai is not None:
         X_train_sledai = X_sledai.iloc[tr_idx]
         X_test_sledai  = X_sledai.iloc[te_idx]
 
-        sledai_metrics, sledai_cm, sledai_probs, _, sledai_thr, sledai_oof_probs, sledai_contributed, sledai_best_c, sledai_best_oof_pr = evaluate_sledai_only_model(
+        sledai_metrics, _, sledai_probs, _, _, sledai_oof_probs, sledai_contributed, sledai_best_c, sledai_best_oof_pr = evaluate_sledai_only_model(
             X_train_sledai=X_train_sledai,
             X_test_sledai=X_test_sledai,
             y_train=y_train,
@@ -2799,7 +2834,6 @@ def _run_one_outer_split(
         }
         metrics_list.append(sledai_metrics_row)
 
-        # SLEDAI-only model also only stores test probabilities for plotting.
         run_store_entries[(outer_idx, "SLEDAI_ONLY")] = {
             "test_probs": sledai_probs,
             "y_test": y_test.copy(),
@@ -2833,8 +2867,7 @@ def _generate_shap_outputs(run_store, gene_name_map, dirs):
     fold_ids = list(range(1, N_OUTER_FOLDS + 1))
     results  = {}
 
-    # Save SHAP summary CSVs for the gene-expression models.
-    # SHAP figures are created only if GENERATE_FIGURES is True.
+    # Save SHAP-related CSVs for gene-expression models and generate summary figures.
     for model_name in MODEL_NAMES:
         shap_df = aggregate_global_shap_genes_across_outer_folds(
             run_store=run_store, model_name=model_name, gene_name_map=gene_name_map, top_k=TOP_K,
@@ -2858,42 +2891,42 @@ def _generate_shap_outputs(run_store, gene_name_map, dirs):
     lr_gene_labels  = lr_shap_df["Gene"].tolist()  if not lr_shap_df.empty  else []
     xgb_gene_labels = xgb_shap_df["Gene"].tolist() if not xgb_shap_df.empty else []
 
-    pr_curves_side_png = os.path.join(dirs["figures"], "05_pr_auc_curves.png")
-    pr_curves_side_png = maybe_make_figure(
-        pr_curves_side_png,
-        plot_pr_auc_curves_side_by_side,
-        run_store, fold_ids, pr_curves_side_png,
+    pr_curves_png = os.path.join(dirs["figures"], "05_pr_auc_curves.png")
+    pr_curves_png = make_and_save_figure(
+        pr_curves_png,
+        plot_pr_auc_curves,
+        run_store, fold_ids, pr_curves_png,
     )
 
-    shap_bar_side_png = os.path.join(dirs["figures"], "07_shap_bar_lr_vs_xgb.png")
-    shap_bar_side_png = maybe_make_figure(
-        shap_bar_side_png,
-        plot_shap_bar_side_by_side,
-        lr_shap_df, xgb_shap_df, shap_bar_side_png,
+    shap_bar_png = os.path.join(dirs["figures"], "07_shap_bar_lr_vs_xgb.png")
+    shap_bar_png = make_and_save_figure(
+        shap_bar_png,
+        plot_shap_bar,
+        lr_shap_df, xgb_shap_df, shap_bar_png,
     )
 
-    beeswarm_side_png = os.path.join(dirs["figures"], "08_shap_beeswarm.png")
+    beeswarm_png = os.path.join(dirs["figures"], "08_shap_beeswarm.png")
     if lr_gene_labels or xgb_gene_labels:
-        beeswarm_side_png = maybe_make_figure(
-            beeswarm_side_png,
-            plot_beeswarm_side_by_side,
-            run_store, lr_gene_labels, xgb_gene_labels, beeswarm_side_png,
+        beeswarm_png = make_and_save_figure(
+            beeswarm_png,
+            plot_beeswarm,
+            run_store, lr_gene_labels, xgb_gene_labels, beeswarm_png,
         )
     else:
-        beeswarm_side_png = None
+        beeswarm_png = None
 
-    correct_oof_side_png = os.path.join(dirs["figures"], "09_top10_correct_oof_genes.png")
-    correct_oof_side_png = maybe_make_figure(
-        correct_oof_side_png,
-        plot_correct_oof_genes_side_by_side,
-        lr_correct, xgb_correct, correct_oof_side_png,
+    correct_oof_png = os.path.join(dirs["figures"], "09_top10_correct_oof_genes.png")
+    correct_oof_png = make_and_save_figure(
+        correct_oof_png,
+        plot_correct_oof_genes,
+        lr_correct, xgb_correct, correct_oof_png,
     )
 
     return {
-        "pr_curves_side_png":   pr_curves_side_png,
-        "shap_bar_side_png":    shap_bar_side_png,
-        "beeswarm_side_png":    beeswarm_side_png,
-        "correct_oof_side_png": correct_oof_side_png,
+        "pr_curves_png":   pr_curves_png,
+        "shap_bar_png":    shap_bar_png,
+        "beeswarm_png":    beeswarm_png,
+        "correct_oof_png": correct_oof_png,
         "lr_shap_df":           lr_shap_df, "xgb_shap_df":    xgb_shap_df,
         "lr_correct_df":        lr_correct,  "xgb_correct_df": xgb_correct,
         "lr_shap_csv":          results["LR_L2"]["shap_csv"],
@@ -2936,12 +2969,11 @@ def _export_summary_outputs(
         plot_df.columns = ["Parameter"] + [f"Fold {int(c)}" for c in plot_df.columns[1:]]
         return plot_df
 
-    # Show best-parameter tables only for the two gene-expression models.
-    # Baseline has no tuned parameters, and SLEDAI-only is a simple comparator.
+    # Export best-parameter tables for the tuned gene-expression models.
     best_params_png = os.path.join(dirs["figures"], "02_best_hyperparameters_selected.png")
-    best_params_png = maybe_make_figure(
+    best_params_png = make_and_save_figure(
         best_params_png,
-        plot_two_tables_side_by_side_with_gap,
+        plot_two_tables,
         _transpose_params_df(lr_best_params_df),  "Logistic Regression L2",
         _transpose_params_df(xgb_best_params_df), "XGBoost",
         save_path=best_params_png,
@@ -2950,14 +2982,13 @@ def _export_summary_outputs(
 
     cm_lr_png  = os.path.join(dirs["figures"], "03a_confusion_matrix_lr_l2.png")
     cm_xgb_png = os.path.join(dirs["figures"], "03b_confusion_matrix_xgb.png")
-    # Only the two main gene-expression models get separate confusion-matrix figures.
-    # The comparator models are still included in the summary tables.
-    cm_lr_png = maybe_make_figure(
+    # Export confusion-matrix figures for the gene-expression models.
+    cm_lr_png = make_and_save_figure(
         cm_lr_png,
         plot_confusion_matrices_one_model,
         all_cms, list(range(1, N_OUTER_FOLDS + 1)), "LR_L2", cm_lr_png,
     )
-    cm_xgb_png = maybe_make_figure(
+    cm_xgb_png = make_and_save_figure(
         cm_xgb_png,
         plot_confusion_matrices_one_model,
         all_cms, list(range(1, N_OUTER_FOLDS + 1)), "XGB", cm_xgb_png,
@@ -3036,7 +3067,7 @@ def _export_summary_outputs(
 
     metrics_png = os.path.join(dirs["figures"], "06_final_average_classification_metrics.png")
     logger.info("=== SUMMARY TABLE MODELS: %s ===", list(summary_df.index))
-    metrics_png = maybe_make_figure(
+    metrics_png = make_and_save_figure(
         metrics_png,
         plot_metrics_table,
         summary_df, metrics_png,
@@ -3051,7 +3082,7 @@ def _export_summary_outputs(
         permutation_csv = os.path.join(dirs["tables"],  "permutation_sanity_check.csv")
         permutation_png = os.path.join(dirs["figures"], "10_permutation_sanity_check.png")
         permutation_df.to_csv(permutation_csv, index=False)
-        permutation_png = maybe_make_figure(
+        permutation_png = make_and_save_figure(
             permutation_png,
             plot_permutation_table_top_bottom,
             permutation_df, permutation_png,
@@ -3073,9 +3104,9 @@ def _export_summary_outputs(
     supp_df = round_numeric_df(supp_df, 2)
 
     per_fold_supp_png = os.path.join(dirs["figures"], "04_per_fold_held_out_test_metrics.png")
-    per_fold_supp_png = maybe_make_figure(
+    per_fold_supp_png = make_and_save_figure(
         per_fold_supp_png,
-        plot_per_fold_metrics_stacked,
+        plot_per_fold_metrics,
         supp_df,
         save_path=per_fold_supp_png,
     )
@@ -3122,11 +3153,11 @@ def _export_summary_outputs(
             "best_params_png":            best_params_png,
             "cm_lr_png":                  cm_lr_png,
             "cm_xgb_png":                 cm_xgb_png,
-            "pr_auc_curves_png":          shap_paths["pr_curves_side_png"],
+            "pr_auc_curves_png":          shap_paths["pr_curves_png"],
             "metrics_png":                metrics_png,
-            "shap_bar_png":               shap_paths["shap_bar_side_png"],
-            "shap_beeswarm_png":          shap_paths["beeswarm_side_png"],
-            "correct_oof_genes_png":      shap_paths["correct_oof_side_png"],
+            "shap_bar_png":               shap_paths["shap_bar_png"],
+            "shap_beeswarm_png":          shap_paths["beeswarm_png"],
+            "correct_oof_genes_png":      shap_paths["correct_oof_png"],
             "permutation_png":            permutation_png,
             "per_fold_supp_png":          per_fold_supp_png,
             "lr_shap_csv":                shap_paths["lr_shap_csv"],
@@ -3143,19 +3174,34 @@ def _export_summary_outputs(
     with open(os.path.join(dirs["logs"], "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
 
-    show_final_outputs_in_order(
+    ordered_paths = show_final_outputs_in_order(
         search_space_png=search_space_png, best_params_png=best_params_png,
         cm_lr_png=cm_lr_png, cm_xgb_png=cm_xgb_png,
         metrics_png=metrics_png, permutation_png=permutation_png,
         per_fold_supp_png=per_fold_supp_png,
-        pr_curves_side_png=shap_paths["pr_curves_side_png"],
-        shap_bar_side_png=shap_paths["shap_bar_side_png"],
-        beeswarm_side_png=shap_paths["beeswarm_side_png"],
-        correct_oof_side_png=shap_paths["correct_oof_side_png"],
+        pr_curves_png=shap_paths["pr_curves_png"],
+        shap_bar_png=shap_paths["shap_bar_png"],
+        beeswarm_png=shap_paths["beeswarm_png"],
+        correct_oof_png=shap_paths["correct_oof_png"],
         output_dir=output_dir,
     )
 
     logger.info("Done. Outputs saved to: %s", output_dir)
+
+    if DISPLAY_FIGURES_IN_NOTEBOOK and _is_jupyter():
+        import IPython.display as ipd
+
+        logger.info("\nDisplaying saved figures at end of run...\n")
+
+        for title, path in ordered_paths:
+            if path is None:
+                continue
+            if os.path.exists(path):
+                logger.info("=== %s ===", title)
+                ipd.display(ipd.HTML(f"<h4>{title}</h4>"))
+                ipd.display(ipd.Image(filename=path))
+            else:
+                logger.warning("Figure not available: %s", title)
 
     return {
         "metrics_df":                metrics_df,
@@ -3183,25 +3229,21 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
         output_dir/shap
         output_dir/logs
     """
-    if GENERATE_FIGURES:
-        plt.rcParams["savefig.dpi"] = 600
-        sns.set_theme(style="white", font_scale=1.4)
-        plt.rcParams.update({
-            "font.size":        TICK_LABEL_SIZE,
-            "axes.titlesize":   SUBPLOT_TITLE_SIZE,
-            "axes.labelsize":   AXIS_LABEL_SIZE,
-            "xtick.labelsize":  TICK_LABEL_SIZE,
-            "ytick.labelsize":  TICK_LABEL_SIZE,
-            "legend.fontsize":  LEGEND_SIZE,
-            "figure.titlesize": FIG_TITLE_SIZE,
-        })
+    sns.set_theme(style="white", font_scale=1.4)
+    plt.rcParams.update({
+        "font.size":        TICK_LABEL_SIZE,
+        "axes.titlesize":   SUBPLOT_TITLE_SIZE,
+        "axes.labelsize":   AXIS_LABEL_SIZE,
+        "xtick.labelsize":  TICK_LABEL_SIZE,
+        "ytick.labelsize":  TICK_LABEL_SIZE,
+        "legend.fontsize":  LEGEND_SIZE,
+        "figure.titlesize": FIG_TITLE_SIZE,
+    })
 
     seed_everything(GLOBAL_SEED)
     dirs = _make_output_dirs(output_dir)
-    logger.info("Figure generation: %s", "enabled" if GENERATE_FIGURES else "disabled")
 
-    if GENERATE_FIGURES:
-        clear_old_png_files(dirs["figures"])
+    clear_old_png_files(dirs["figures"])
 
     import time
     for dir_path in dirs.values():
@@ -3228,7 +3270,11 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
     annotation_path = os.path.join(dirs["logs"], "GPL10558_probe_to_gene_symbol.csv")
     if not os.path.exists(annotation_path):
         logger.info("Annotation file not found; downloading now.")
-        download_gpl_annotation(annotation_path)
+        try:
+            download_gpl_annotation(annotation_path)
+        except Exception as e:
+            logger.warning("Annotation download failed. Proceeding with probe IDs only. Error: %s", e)
+            annotation_path = None
     else:
         logger.info("Annotation file found: %s", annotation_path)
 
@@ -3247,9 +3293,9 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
 
     search_spaces    = get_search_space_tables()
     search_space_png = os.path.join(dirs["figures"], "01_hyperparameter_search_space.png")
-    search_space_png = maybe_make_figure(
+    search_space_png = make_and_save_figure(
         search_space_png,
-        plot_two_tables_side_by_side_with_gap,
+        plot_two_tables,
         search_spaces["LR_L2"], "Logistic Regression L2",
         search_spaces["XGB"],   "XGBoost",
         save_path=search_space_png,
@@ -3260,7 +3306,7 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
         outer_cv, X, y, groups, outer_is_stratified, dirs["logs"],
     )
 
-    # Keep original sample IDs (e.g. GSM IDs) in fold exports.
+    # Preserve original sample IDs in the fold assignment exports.
     fold_assignment_rows = []
     test_assignment_rows = []
     for outer_idx, (tr_idx, te_idx) in enumerate(fold_indices, start=1):
@@ -3313,7 +3359,7 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
     logger.info("=== MODELS IN metrics_df: %s ===", sorted(metrics_df["Model"].unique().tolist()))
     metrics_df.to_csv(os.path.join(dirs["tables"], "metrics_outer_test_folds.csv"), index=False)
 
-    # OOF coverage only applies to models that use inner-fold tuning or validation.
+    # Check OOF coverage for models that use inner-fold validation.
     coverage_models = MODEL_NAMES + ["SLEDAI_ONLY"]
 
     low_coverage = metrics_df[
@@ -3333,7 +3379,7 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
             MIN_OOF_COVERAGE_WARN * 100,
         )
 
-    # The best overall model can be a comparator, so also track the best gene-expression model separately.
+    # Track both the best overall model and the best gene-expression model.
     mean_test_pr_auc_all = (
         metrics_df[metrics_df["Model"].isin(ALL_REPORT_MODEL_NAMES)]
         .groupby("Model")["PR-AUC (PRIMARY)"]
@@ -3368,6 +3414,7 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
         best_gene_expression_model_name=best_gene_expression_model_name,
     )
 
+
 def _is_jupyter() -> bool:
     try:
         from IPython import get_ipython
@@ -3375,7 +3422,7 @@ def _is_jupyter() -> bool:
         if shell is None:
             return False
         shell_type = type(shell).__name__
-        # Covers standard Jupyter, JupyterLab, and Google Colab
+        # Covers standard Jupyter environments, including Colab.
         return shell_type in ("ZMQInteractiveShell", "Shell") or "colab" in str(type(shell)).lower()
     except ImportError:
         return False
