@@ -1,42 +1,42 @@
-"""
-Author: Aaron Choi
-Project: Pediatric Lupus Flare Prediction (GSE65391)
-File: build_lupus_dataframe.py
-
-Build an analysis-ready longitudinal dataset from the pediatric lupus
-gene-expression study GSE65391.
-
-Overview:
-    This script downloads or loads GEO data using GEOparse and generates
-    a cleaned, paired, and labeled dataset for machine-learning analysis
-    of pre-flare states in pediatric systemic lupus erythematosus (SLE)
-    subjects.
-
-Steps:
-    1. Download or load GEO dataset GSE65391 using GEOparse
-    2. Build metadata and gene-expression matrices
-    3. Filter to lupus visit samples only (remove healthy control samples)
-    4. Pair each visit with the subsequent visit from the same subject
-    5. Filter paired visits to the specified follow-up window and label visits
-       as "pre-flare" based on SLEDAI increase at follow-up
-    6. Save output datasets and a pipeline summary JSON
-
-Default output directory:
-    outputs/
-
-Primary ML-ready output:
-    outputs/lupus_final_df.pkl
-
-Outputs:
-    - full_df
-        Merged metadata and expression matrix
-    - joined_df
-        Within-subject visit pairs with an available subsequent visit
-    - lupus_final_df
-        Filtered and labeled dataset for modeling
-    - pipeline_summary.json
-        Dataset statistics and reproducibility information
-"""
+# =========================================================
+# Author: Aaron Choi
+# Project: Pediatric Lupus Flare Prediction (GSE65391)
+# File: build_lupus_dataframe.py
+#
+# Build an analysis-ready visit-paired dataset from the pediatric lupus
+# gene-expression study GSE65391.
+#
+# Overview:
+# Downloads GEO data and creates a cleaned, paired dataset for predicting
+# pre-flare states in pediatric lupus (SLE).
+#
+# Steps:
+#    1. Download GEO dataset GSE65391 using GEOparse
+#    2. Build metadata and gene-expression matrices
+#    3. Filter to lupus visit samples only (remove healthy control samples)
+#    4. Pair each visit with the subsequent visit from the same subject
+#    5. Filter paired visits to a 90-day follow-up window and label
+#       baseline visits as "pre-flare" based on SLEDAI increase at follow-up
+#    6. Save output datasets and a pipeline summary JSON
+#
+# Default output directory:
+#    outputs/
+#
+# Primary ML-ready output:
+#    outputs/lupus_final_df.pkl
+#
+# Outputs:
+#    - full_df
+#        Merged metadata and expression matrix
+#    - lup_df
+#        Lupus-only visit-level dataset after filtering and cleaning
+#    - joined_df
+#        Within-subject baseline/subsequent visit pairs with follow-up traceability
+#    - lupus_final_df
+#        Filtered and labeled baseline-visit dataset for modeling
+#    - pipeline_summary.json
+#        Dataset statistics and reproducibility information
+# =========================================================
 
 
 # --- Environment setup ---
@@ -47,7 +47,7 @@ import argparse
 import logging
 from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 import GEOparse
@@ -72,7 +72,7 @@ logger.addHandler(handler)
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Build an analysis-ready longitudinal lupus dataset from GEO."
+        description="Build an analysis-ready visit-paired lupus dataset from GEO."
     )
     parser.add_argument(
         "--geo-accession",
@@ -168,9 +168,10 @@ def save_dataframe_multiple_formats(
 ) -> None:
     """Save df to any combination of pickle, parquet, and compressed CSV.
 
-    index=True is intentional: the index carries gsm_id, which is the primary
-    row identity for all saved dataframes. Pass index=False only for frames
-    that have a meaningless integer index.
+    index=True is intentional: the index preserves source row identity.
+    Derived paired tables also include explicit baseline/follow-up sample ID
+    columns. Pass index=False only for frames that have a meaningless integer
+    index.
     """
     if pkl_path is not None:
         df.to_pickle(pkl_path)
@@ -214,6 +215,12 @@ def validate_final_ml_input(df: pd.DataFrame) -> None:
     if df["subject"].isna().any():
         raise ValueError("Final ML dataset contains NaN values in 'subject'.")
 
+    valid_labels = set(pd.Series(df["preflare_bool"]).dropna().unique())
+    if not valid_labels.issubset({0, 1}):
+        raise ValueError(
+            f"Final ML dataset has invalid preflare_bool values: {sorted(valid_labels)}; expected only 0/1"
+        )
+
     logger.info(
         "Final ML input validation passed: %d samples | %d ILMN_* features | %d subjects",
         df.shape[0], len(gene_cols), df["subject"].nunique()
@@ -222,20 +229,21 @@ def validate_final_ml_input(df: pd.DataFrame) -> None:
 
 # --- Load GEO data ---
 
-def load_geo_dataset(geo_accession: str):
-    """Download (or load from local cache) a GEO dataset by accession number."""
-    logger.info(f"Downloading/loading GEO dataset: {geo_accession}")
+def load_geo_dataset(geo_accession: str, cache_dir: Path) -> Any:
+    """Download a GEO dataset by accession number and reuse local cached files when available."""
+    logger.info(f"Downloading GEO dataset or reusing cached files: {geo_accession}")
+    cache_dir.mkdir(parents=True, exist_ok=True)
     try:
-        gse = GEOparse.get_GEO(geo=geo_accession)
+        gse = GEOparse.get_GEO(geo=geo_accession, destdir=str(cache_dir))
     except Exception as e:
-        raise RuntimeError(f"Failed to download/load GEO dataset {geo_accession}: {e}")
+        raise RuntimeError(f"Failed to retrieve GEO dataset {geo_accession}: {e}")
     logger.info(f"Loaded GEO dataset: {geo_accession}")
     return gse
 
 
 # --- Build Gene-Expression matrix ---
 
-def build_expression_matrix(gse) -> pd.DataFrame:
+def build_expression_matrix(gse: Any) -> pd.DataFrame:
     """Build a samples x probes expression matrix from GEO sample tables."""
     logger.info("Building expression matrix...")
 
@@ -254,6 +262,10 @@ def build_expression_matrix(gse) -> pd.DataFrame:
 
         df = gsm.table[["ID_REF", "VALUE"]].copy()
         df["VALUE"] = pd.to_numeric(df["VALUE"], errors="coerce")
+
+        n_missing_value = df["VALUE"].isna().sum()
+        if n_missing_value > 0:
+            logger.warning(f"{gsm_id}: {n_missing_value} expression values could not be parsed and were set to NaN")
 
         n_dupes = df["ID_REF"].duplicated().sum()
         if n_dupes > 0:
@@ -274,13 +286,19 @@ def build_expression_matrix(gse) -> pd.DataFrame:
     if n_dup_samples > 0:
         raise ValueError(f"Expression matrix has {n_dup_samples} duplicate gsm_id rows")
 
+    all_nan_rows = expr_matrix.isna().all(axis=1)
+    if all_nan_rows.any():
+        raise ValueError(
+            f"Expression matrix contains {int(all_nan_rows.sum())} samples with all-NaN expression values"
+        )
+
     logger.info(f"Expression matrix shape: {expr_matrix.shape}")
     return expr_matrix
 
 
 # --- Build Metadata table ---
 
-def build_metadata_dataframe(gse) -> pd.DataFrame:
+def build_metadata_dataframe(gse: Any) -> pd.DataFrame:
     """Build a metadata table and expand characteristics_ch1 into separate columns."""
     logger.info("Building metadata dataframe...")
 
@@ -353,6 +371,9 @@ def prepare_lupus_visits(full_df: pd.DataFrame) -> pd.DataFrame:
     if lup_df.empty:
         raise ValueError("No SLE samples found after filtering on 'disease state'.")
 
+    lup_df["subject"] = lup_df["subject"].astype(str).str.strip()
+    lup_df = lup_df[lup_df["subject"] != ""].copy()
+
     lup_df["days_since_diagnosis"] = pd.to_numeric(
         lup_df["days_since_diagnosis"], errors="coerce"
     )
@@ -369,7 +390,9 @@ def prepare_lupus_visits(full_df: pd.DataFrame) -> pd.DataFrame:
     if lup_df.empty:
         raise ValueError("No valid SLE samples remain after dropping rows with missing required fields.")
 
-    lup_df = lup_df.sort_values(["subject", "days_since_diagnosis"])
+    lup_df = lup_df.copy()
+    lup_df["baseline_gsm_id"] = lup_df.index.astype(str)
+    lup_df = lup_df.sort_values(["subject", "days_since_diagnosis", "baseline_gsm_id"])
     lup_df["calculated_visit_num"] = lup_df.groupby("subject").cumcount() + 1
 
     dup_mask = lup_df.duplicated(subset=["subject", "days_since_diagnosis"], keep=False)
@@ -388,21 +411,25 @@ def build_longitudinal_pairs(lup_df: pd.DataFrame) -> pd.DataFrame:
     """Pair each visit with the next visit for the same subject."""
     logger.info("Pairing visits within subject...")
 
-    cols_to_shift = ["days_since_diagnosis", "sledai"]
+    cols_to_shift = ["baseline_gsm_id", "days_since_diagnosis", "sledai"]
     shifted = (
         lup_df
-        .sort_values(["subject", "days_since_diagnosis"])
+        .sort_values(["subject", "days_since_diagnosis", "baseline_gsm_id"])
         .groupby("subject")[cols_to_shift]
         .shift(-1)
-        .rename(columns={c: f"{c}_subsequent" for c in cols_to_shift})
+        .rename(columns={
+            "baseline_gsm_id": "subsequent_gsm_id",
+            "days_since_diagnosis": "days_since_diagnosis_subsequent",
+            "sledai": "sledai_subsequent",
+        })
     )
 
     joined = pd.concat([lup_df, shifted], axis=1).dropna(
-        subset=["days_since_diagnosis_subsequent", "sledai_subsequent"]
+        subset=["days_since_diagnosis_subsequent", "sledai_subsequent", "subsequent_gsm_id"]
     ).copy()
 
     n_dup_pairs = joined.duplicated(
-        subset=["subject", "days_since_diagnosis", "days_since_diagnosis_subsequent"]
+        subset=["subject", "baseline_gsm_id", "subsequent_gsm_id"]
     ).sum()
     if n_dup_pairs > 0:
         logger.warning(f"{n_dup_pairs} duplicate visit-pair rows after merging")
@@ -418,7 +445,7 @@ def filter_and_label_preflare(
     max_followup_days: int = 90,
     preflare_threshold: int = 4,
 ) -> pd.DataFrame:
-    """Filter to pairs within the follow-up window and label pre-flare visits."""
+    """Filter to eligible baseline/follow-up pairs and label baseline visits as pre-flare."""
     logger.info(f"Filtering <={max_followup_days} day follow-up visits...")
 
     delta = (
@@ -431,10 +458,12 @@ def filter_and_label_preflare(
     lupus_final_df["sledai_delta"] = (
         lupus_final_df["sledai_subsequent"] - lupus_final_df["sledai"]
     )
-    lupus_final_df["preflare_bool"] = lupus_final_df["sledai_delta"] >= preflare_threshold
+    lupus_final_df["preflare_bool"] = (
+        lupus_final_df["sledai_delta"] >= preflare_threshold
+    ).astype(int)
 
-    n_pos = lupus_final_df["preflare_bool"].sum()
-    n_neg = (~lupus_final_df["preflare_bool"]).sum()
+    n_pos = int((lupus_final_df["preflare_bool"] == 1).sum())
+    n_neg = int((lupus_final_df["preflare_bool"] == 0).sum())
     if n_pos == 0 or n_neg == 0:
         raise ValueError(
             f"preflare_bool has only one class (pos={n_pos}, neg={n_neg}). "
@@ -490,8 +519,8 @@ def print_subject_counts_by_stage(
 
     print("\npreflare_bool class distribution")
     vc = lupus_final_df["preflare_bool"].value_counts()
-    print(f"  True (pre-flare)      : {vc.get(True, 0)}")
-    print(f"  False (non-pre-flare) : {vc.get(False, 0)}")
+    print(f"  True (pre-flare)      : {vc.get(1, 0)}")
+    print(f"  False (non-pre-flare) : {vc.get(0, 0)}")
 
     print("=" * 80)
 
@@ -540,9 +569,9 @@ def save_pipeline_summary(
         "n_final": int(lupus_final_df.shape[0]),
         "n_subjects_final": int(lupus_final_df["subject"].nunique()),
 
-        "preflare_true": int(lupus_final_df["preflare_bool"].sum()),
-        "preflare_false": int((~lupus_final_df["preflare_bool"]).sum()),
-        "preflare_prevalence": round(float(lupus_final_df["preflare_bool"].mean()), 4),
+        "preflare_true": int((lupus_final_df["preflare_bool"] == 1).sum()),
+        "preflare_false": int((lupus_final_df["preflare_bool"] == 0).sum()),
+        "preflare_prevalence": round(float((lupus_final_df["preflare_bool"] == 1).mean()), 4),
 
         "max_followup_days": max_followup_days,
         "preflare_sledai_delta_threshold": preflare_threshold,
@@ -569,8 +598,12 @@ def main(args: argparse.Namespace) -> dict[str, pd.DataFrame]:
     output_dir = resolve_output_dir(args)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    cache_dir = output_dir / "cache"
+
     full_df_pkl = output_dir / "full_df.pkl"
     full_df_parquet = output_dir / "full_df.parquet"
+    lup_df_pkl = output_dir / "lup_df.pkl"
+    lup_df_parquet = output_dir / "lup_df.parquet"
     joined_df_pkl = output_dir / "joined_df.pkl"
     joined_df_parquet = output_dir / "joined_df.parquet"
     lupus_final_pkl = output_dir / "lupus_final_df.pkl"
@@ -580,10 +613,17 @@ def main(args: argparse.Namespace) -> dict[str, pd.DataFrame]:
 
     print_reproducibility_info()
 
-    gse = load_geo_dataset(args.geo_accession)
+    gse = load_geo_dataset(args.geo_accession, cache_dir)
 
     expr_matrix = build_expression_matrix(gse)
     metadata_df = build_metadata_dataframe(gse)
+
+    validate_columns(
+        metadata_df,
+        ["disease state", "subject", "days_since_diagnosis", "sledai"],
+        "metadata_df"
+    )
+
     full_df = merge_metadata_and_expression(metadata_df, expr_matrix)
 
     save_dataframe_multiple_formats(
@@ -593,6 +633,13 @@ def main(args: argparse.Namespace) -> dict[str, pd.DataFrame]:
     )
 
     lup_df = prepare_lupus_visits(full_df)
+
+    save_dataframe_multiple_formats(
+        lup_df,
+        pkl_path=lup_df_pkl,
+        parquet_path=lup_df_parquet,
+    )
+
     joined_df = build_longitudinal_pairs(lup_df)
 
     save_dataframe_multiple_formats(
