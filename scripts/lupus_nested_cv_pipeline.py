@@ -1,17 +1,15 @@
 # =========================================================
 # Author: Aaron Choi
 # Project: Pediatric Lupus Flare Prediction (GSE65391)
-# File: lupus_nested_cv_pipeline.py
 #
 # Nested cross-validation pipeline for predicting pre-flare
-# states in pediatric SLE using gene-expression data.
+# states in pediatric SLE using gene-expression data,
 #
 # Main components:
 # - subject-level grouped nested cross-validation
 # - leakage-safe feature selection and hyperparameter tuning
 # - Logistic Regression and XGBoost gene-expression models
-# - prevalence baseline comparator
-# - SLEDAI-only logistic regression comparator
+# - prevalence baseline and SLEDAI-only logistic regression comparators
 # - SHAP analysis for gene-expression models
 # - permutation-label sanity checks
 # =========================================================
@@ -29,7 +27,6 @@ import platform
 import warnings
 import itertools
 import textwrap
-import requests
 import datetime
 from collections import Counter, defaultdict
 
@@ -52,11 +49,14 @@ warnings.filterwarnings(
 
 import numpy as np
 import pandas as pd
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import seaborn as sns
-plt.ioff() 
+
+plt.ioff()  # disable automatic matplotlib rendering during figure creation
+
+
 import sklearn
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
@@ -136,7 +136,7 @@ SHAP_EVAL_MAX = 400
 
 RUN_PERMUTATION_CHECK     = True
 N_PERMUTATION_OUTER_FOLDS = N_OUTER_FOLDS
-PERM_N_TRIALS_LR          = 20  
+PERM_N_TRIALS_LR          = 20
 PERM_N_TRIALS_XGB         = 25
 
 CLASS_NAMES_CODE    = ["non_pre_flare", "pre_flare"]
@@ -181,7 +181,10 @@ TICK_LABEL_SIZE    = 20
 VALUE_LABEL_SIZE   = 18
 LEGEND_SIZE        = 16
 
-DISPLAY_FIGURES_IN_NOTEBOOK = False  # If True, display figures inline in Jupyter/Colab
+ALLOW_ANNOTATION_DOWNLOAD = os.environ.get("LUPUS_ALLOW_ANNOTATION_DOWNLOAD", "1") == "1"
+ANNOTATION_PATH = os.environ.get("LUPUS_ANNOTATION_PATH", "")
+
+DISPLAY_FIGURES_IN_NOTEBOOK = False # If True, display figures inline in Jupyter/Colab
 
 
 def _make_output_dirs(base: str) -> dict:
@@ -196,33 +199,46 @@ def _make_output_dirs(base: str) -> dict:
     return dirs
 
 
-def clear_old_png_files(figures_dir: str) -> None:
-    if not os.path.isdir(figures_dir):
-        return
-    for fname in os.listdir(figures_dir):
-        if fname.lower().endswith(".png"):
-            fpath = os.path.join(figures_dir, fname)
-            try:
-                os.remove(fpath)
-            except OSError:
-                logger.warning("Could not delete old figure file: %s", fpath)
+def make_run_output_dir(base_output_dir: str) -> str:
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = os.path.join(base_output_dir, f"run_{timestamp}")
+    os.makedirs(run_dir, exist_ok=True)
+    return run_dir
+
+
+def make_cache_dir(base_output_dir: str) -> str:
+    cache_dir = os.path.join(base_output_dir, "_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir
 
 
 def make_and_save_figure(fig_path: str | None, plot_func, *args, **kwargs):
+    """
+    Call a plotting function that saves its own figure to disk.
+    This wrapper only checks whether the expected output file exists.
+    It does not display figures here.
+    """
     plot_func(*args, **kwargs)
     if fig_path is not None and os.path.exists(fig_path):
+        logger.info("Saved figure: %s", fig_path)
         return fig_path
+    logger.warning("Expected figure was not created: %s", fig_path)
     return None
 
+
+# Basic helper functions
 def seed_everything(seed: int) -> None:
     os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
 
+
 seed_everything(GLOBAL_SEED)
+
 
 def get_model_display_name(model_name: str) -> str:
     return MODEL_DISPLAY_NAMES.get(model_name, model_name)
+
 
 def round_numeric_df(df: pd.DataFrame, decimals: int = 2) -> pd.DataFrame:
     out = df.copy()
@@ -409,13 +425,7 @@ def validate_data(X: pd.DataFrame, y: pd.Series, groups: pd.Series) -> None:
     )
 
 
-def load_data(filepath: str):
-    """
-    Load the processed lupus dataset from a pickle file.
-
-    Returns X, y, groups, gene_cols, and sample_ids.
-    Raises FileNotFoundError if the file is missing and ValueError if required columns are missing.
-    """
+def load_raw_dataframe(filepath: str) -> pd.DataFrame:
     if not os.path.exists(filepath):
         raise FileNotFoundError(
             f"Could not find data file:\n  {filepath}\n\n"
@@ -424,10 +434,19 @@ def load_data(filepath: str):
             f"  • Override via env var: os.environ['LUPUS_DATA_PATH'] = '/your/path.pkl'\n"
             f"  • Pass directly: run_pipeline('/your/path.pkl')\n"
         )
-
     df = pd.read_pickle(filepath)
     logger.info("Data loaded from: %s", filepath)
     logger.info("Columns: %d total", df.shape[1])
+    return df
+
+
+def load_data(df: pd.DataFrame):
+    """
+    Load the processed lupus dataset from a dataframe.
+
+    Returns X, y, groups, gene_cols, and sample_ids.
+    Raises ValueError if required columns are missing.
+    """
 
     if "preflare_bool" not in df.columns or "subject" not in df.columns:
         raise ValueError("Missing required columns: need 'preflare_bool' and 'subject'")
@@ -464,7 +483,7 @@ def load_data(filepath: str):
     return X, y, groups, gene_cols, sample_ids
 
 
-def load_sledai_feature(filepath: str, candidate_cols=None, preferred_col=None):
+def load_sledai_feature(df: pd.DataFrame, candidate_cols=None, preferred_col=None):
     """
     Load one SLEDAI column from the dataset.
 
@@ -488,8 +507,6 @@ def load_sledai_feature(filepath: str, candidate_cols=None, preferred_col=None):
         "next", "future", "follow", "delta", "change", "diff",
         "increase", "decrease", "post", "outcome", "label", "target",
     ]
-
-    df = pd.read_pickle(filepath)
 
     if "preflare_bool" not in df.columns or "subject" not in df.columns:
         raise ValueError("Missing required columns: need 'preflare_bool' and 'subject'")
@@ -545,8 +562,7 @@ def load_sledai_feature(filepath: str, candidate_cols=None, preferred_col=None):
 
     if found is None:
         logger.warning(
-            "No valid SLEDAI column found in %s — SLEDAI-only comparator will be skipped.",
-            filepath,
+            "No valid SLEDAI column found — SLEDAI-only comparator will be skipped."
         )
         return None, None, None, None
 
@@ -576,7 +592,20 @@ def load_sledai_feature(filepath: str, candidate_cols=None, preferred_col=None):
 
 # Probe annotation helpers
 def download_gpl_annotation(save_csv_path: str):
-    """Download the GPL10558 probe-to-gene annotation from GEO and save it as a CSV file."""
+    """
+    Download the GPL10558 probe-to-gene annotation from GEO and save it as a CSV file.
+
+    Notes:
+    - This is optional and only used when LUPUS_ALLOW_ANNOTATION_DOWNLOAD=1.
+    - Requires internet access and the 'requests' package to be installed.
+    """
+    try:
+        import requests
+    except ImportError as e:
+        raise RuntimeError(
+            "Optional annotation download requested, but the 'requests' package is not installed."
+        ) from e
+
     if os.path.exists(save_csv_path):
         logger.info("Annotation file already exists: %s", save_csv_path)
         return save_csv_path
@@ -604,8 +633,14 @@ def download_gpl_annotation(save_csv_path: str):
     gpl_df     = pd.read_csv(io.StringIO("\n".join(lines[table_start:table_end])), sep="\t", low_memory=False)
     cols_lower = {c.lower(): c for c in gpl_df.columns}
 
-    probe_col = next((cols_lower[c] for c in ["id", "probe_id", "probeid", "ilmn_id", "ilmnid", "array_address_id", "probe"] if c in cols_lower), None)
-    gene_col  = next((cols_lower[c] for c in ["symbol", "gene symbol", "gene_symbol", "genesymbol", "gene", "gene_name", "symbol_interpreted"] if c in cols_lower), None)
+    probe_col = next(
+        (cols_lower[c] for c in ["id", "probe_id", "probeid", "ilmn_id", "ilmnid", "array_address_id", "probe"] if c in cols_lower),
+        None,
+    )
+    gene_col = next(
+        (cols_lower[c] for c in ["symbol", "gene symbol", "gene_symbol", "genesymbol", "gene", "gene_name", "symbol_interpreted"] if c in cols_lower),
+        None,
+    )
 
     if probe_col is None:
         raise RuntimeError(f"Could not identify probe column. Columns: {gpl_df.columns.tolist()}")
@@ -617,7 +652,7 @@ def download_gpl_annotation(save_csv_path: str):
             raise RuntimeError(f"Could not identify gene-name column. Columns: {gpl_df.columns.tolist()}")
 
     out = gpl_df[[probe_col, gene_col]].copy()
-    out.columns   = ["probe_id", "gene_name"]
+    out.columns      = ["probe_id", "gene_name"]
     out["probe_id"]  = out["probe_id"].astype(str).str.strip()
     out["gene_name"] = out["gene_name"].map(clean_gene_name)
     out = out.dropna(subset=["probe_id"])
@@ -831,15 +866,23 @@ def build_inner_fold_cache(X_train, y_train, g_train, seed):
     y_np = y_train.values
     g_np = g_train.values
 
+    try:
+        split_list = list(cv.split(X_np, y_np, g_np))
+    except Exception as e:
+        logger.warning("Failed to create inner CV splits (seed=%d): %s", seed, e)
+        return []
+
     fold_cache = []
     n_usable   = 0
 
-    for fold_idx, (tr_idx, va_idx) in enumerate(cv.split(X_np, y_np, g_np)):
+    for fold_idx, (tr_idx, va_idx) in enumerate(split_list):
         ytr = y_np[tr_idx]
         yva = y_np[va_idx]
 
-        if not (_log_fold_class_counts("inner-train", ytr, fold_idx) and
-                _log_fold_class_counts("inner-val",   yva, fold_idx)):
+        if not (
+            _log_fold_class_counts("inner-train", ytr, fold_idx)
+            and _log_fold_class_counts("inner-val", yva, fold_idx)
+        ):
             fold_cache.append(None)
             continue
 
@@ -867,12 +910,19 @@ def build_inner_fold_cache(X_train, y_train, g_train, seed):
         Xva_pf_scaled = scaler_pf.transform(Xva_pf)
 
         fold_cache.append({
-            "fold_idx": fold_idx, "tr_idx": tr_idx, "va_idx": va_idx,
-            "Xtr_pf": Xtr_pf, "Xva_pf": Xva_pf,
-            "Xtr_pf_scaled": Xtr_pf_scaled, "Xva_pf_scaled": Xva_pf_scaled,
-            "scaler_pf": scaler_pf, "ytr": ytr, "yva": yva,
+            "fold_idx": fold_idx,
+            "tr_idx": tr_idx,
+            "va_idx": va_idx,
+            "Xtr_pf": Xtr_pf,
+            "Xva_pf": Xva_pf,
+            "Xtr_pf_scaled": Xtr_pf_scaled,
+            "Xva_pf_scaled": Xva_pf_scaled,
+            "scaler_pf": scaler_pf,
+            "ytr": ytr,
+            "yva": yva,
             "pf_pos_in_original": pf_pos_in_original,
-            "pf_support": pf_support, "vt_support": vt_support,
+            "pf_support": pf_support,
+            "vt_support": vt_support,
         })
         n_usable += 1
 
@@ -965,6 +1015,9 @@ def tune_lr_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=Non
     if fold_cache is None:
         fold_cache = build_inner_fold_cache(X_train, y_train, g_train, seed)
 
+    if len(fold_cache) == 0 or all(f is None for f in fold_cache):
+        raise ValueError("LR_L2 tuning failed: no usable inner folds available.")
+
     study = optuna.create_study(direction="maximize", sampler=TPESampler(seed=seed))
 
     def objective(trial):
@@ -1009,6 +1062,9 @@ def tune_xgb_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=No
     """
     if fold_cache is None:
         fold_cache = build_inner_fold_cache(X_train, y_train, g_train, seed)
+
+    if len(fold_cache) == 0 or all(f is None for f in fold_cache):
+        raise ValueError("XGB tuning failed: no usable inner folds available.")
 
     # Use MedianPruner for XGBoost trials only.
     study = optuna.create_study(
@@ -1228,12 +1284,16 @@ def tune_sledai_only_model(X_train_sledai, y_train, g_train, seed, c_grid=None):
     if len(np.unique(ytr)) < 2:
         return None, None, None, 0.5, np.nan
 
-    check_inner_cv_feasibility(
-        y_train=pd.Series(ytr),
-        g_train=pd.Series(gtr),
-        n_splits=N_INNER_FOLDS,
-        context="SLEDAI-only inner CV"
-    )
+    try:
+        check_inner_cv_feasibility(
+            y_train=pd.Series(ytr),
+            g_train=pd.Series(gtr),
+            n_splits=N_INNER_FOLDS,
+            context="SLEDAI-only inner CV"
+        )
+    except ValueError as e:
+        logger.warning("%s", e)
+        return None, None, None, 0.5, np.nan
 
     inner_cv, _ = _make_inner_cv(seed)
 
@@ -1316,6 +1376,10 @@ def evaluate_sledai_only_model(X_train_sledai, X_test_sledai, y_train, y_test, g
     )
 
     if best_c is None:
+        logger.warning(
+            "SLEDAI-only tuning was infeasible for this outer split; "
+            "using fallback final model with C=1.0 and threshold=0.5."
+        )
         best_c = 1.0
         threshold = 0.5
         oof_probs = np.zeros(len(ytr), dtype=float)
@@ -1600,19 +1664,23 @@ def plot_confusion_matrices_one_model(all_cms, fold_ids, model_name, save_path):
         ax   = axes[r, c]
         cm   = all_cms[(fold_id, model_name)]
 
-        sns.heatmap(
-            cm, annot=False, fmt="d", ax=ax,
-            cmap="Blues", linewidths=0.5, linecolor="white",
-            vmin=0, vmax=global_vmax,
-            cbar=not cbar_drawn, cbar_ax=cbar_ax if not cbar_drawn else None,
-            square=True,
-        )
+        im = ax.imshow(cm, cmap="Blues", vmin=0, vmax=global_vmax, aspect="equal")
+
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+
+        ax.set_xticks(np.arange(-0.5, cm.shape[1], 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, cm.shape[0], 1), minor=True)
+        ax.grid(which="minor", color="white", linestyle="-", linewidth=2)
+        ax.tick_params(which="minor", bottom=False, left=False)
+
         if not cbar_drawn:
+            fig.colorbar(im, cax=cbar_ax)
             cbar_drawn = True
 
         for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
             ax.text(
-                j + 0.5, i + 0.5, f"{cm[i, j]}",
+                j, i, f"{cm[i, j]}",
                 ha="center", va="center", fontsize=17, fontweight="bold",
                 color="white" if cm[i, j] > global_vmax / 2 else "black",
             )
@@ -1620,6 +1688,8 @@ def plot_confusion_matrices_one_model(all_cms, fold_ids, model_name, save_path):
         ax.set_title(f"Outer Fold {fold_id}", fontsize=26, fontweight="bold", pad=8)
         ax.set_xlabel("Predicted", fontsize=18, labelpad=8)
         ax.set_ylabel("Actual",    fontsize=18, labelpad=8)
+        ax.set_xticks([0, 1])
+        ax.set_yticks([0, 1])
         ax.set_xticklabels(CLASS_NAMES_DISPLAY, fontsize=17)
         ax.set_yticklabels(CLASS_NAMES_DISPLAY, fontsize=17, rotation=0)
         ax.tick_params(axis="both", length=0)
@@ -2082,7 +2152,7 @@ def plot_pr_auc_curves(run_store, fold_ids, save_path):
 def plot_shap_bar(lr_shap_df, xgb_shap_df, save_path):
     fig, axes = plt.subplots(2, 1, figsize=(18, max(16, 0.85 * TOP_K + 8)))
     fig.suptitle(
-        "Top 20 Influential Genes by Mean |SHAP| Across Models and Outer Training Folds",
+        "Top 20 Genes by Mean |SHAP| Across Models",
         fontsize=FIG_TITLE_SIZE, fontweight="bold", y=0.98,
     )
     for ax, df, model_name in zip(axes, [lr_shap_df, xgb_shap_df], ["LR_L2", "XGB"]):
@@ -2242,7 +2312,7 @@ def aggregate_global_shap_genes_across_outer_folds(run_store, model_name, gene_n
 def plot_beeswarm(run_store, lr_gene_labels, xgb_gene_labels, save_path):
     fig, axes = plt.subplots(2, 1, figsize=(18, 20))
     fig.suptitle(
-        "SHAP Beeswarm Plot of Top 20 Influential Genes Across Models and Outer Training Folds",
+        "SHAP Beeswarm of Top 20 Genes Across Models",
         fontsize=FIG_TITLE_SIZE, fontweight="bold", y=0.98,
     )
     for ax, model_name, gene_labels in zip(axes, ["LR_L2", "XGB"], [lr_gene_labels, xgb_gene_labels]):
@@ -2369,7 +2439,7 @@ def plot_correct_oof_genes(lr_df, xgb_df, save_path):
     fig_height = max(9.5, 0.68 * n_rows + 3.8)
     fig, axes  = plt.subplots(2, 1, figsize=(16.5, fig_height))
     fig.suptitle(
-        f"Top {TOP_K_CORRECT_OOF} Genes Associated with Correct Inner-Validation Predictions\nAcross Outer Training Folds",
+        f"Top {TOP_K_CORRECT_OOF} Genes Linked to Correct Inner-Validation Predictions",
         fontsize=24, fontweight="bold", y=0.995,
     )
     _render_table(axes[0], lr_df,  get_model_display_name("LR_L2"))
@@ -2524,50 +2594,97 @@ def run_permutation_sanity_check_on_outer_test_folds(outer_summaries):
 
     rows = []
 
-    for i, outer_item in enumerate(outer_summaries[:N_PERMUTATION_OUTER_FOLDS], start=1):
-        fold_id  = outer_item["outer_fold"]
+    usable_outer_summaries = [
+        item for item in outer_summaries
+        if not item.get("skipped", False)
+    ]
+
+    if not usable_outer_summaries:
+        logger.warning("Permutation check skipped: no usable outer folds available.")
+        return pd.DataFrame()
+
+    for i, outer_item in enumerate(usable_outer_summaries[:N_PERMUTATION_OUTER_FOLDS], start=1):
+        fold_id   = outer_item["outer_fold"]
         fold_seed = outer_item["fold_seed"]
 
-        X_train = outer_item["X_train"]; y_train = outer_item["y_train"]
-        g_train = outer_item["g_train"]; X_test  = outer_item["X_test"]
+        X_train = outer_item["X_train"]
+        y_train = outer_item["y_train"]
+        g_train = outer_item["g_train"]
+        X_test  = outer_item["X_test"]
         y_test  = outer_item["y_test"]
 
-        logger.info("Permutation check — outer fold %d (%d/%d)", fold_id, i, min(len(outer_summaries), N_PERMUTATION_OUTER_FOLDS))
+        logger.info(
+            "Permutation check — outer fold %d (%d/%d)",
+            fold_id, i, min(len(usable_outer_summaries), N_PERMUTATION_OUTER_FOLDS)
+        )
 
-        # Permute outer-training labels only.
-        # The model is then evaluated against the real held-out test labels.
-        # This tests whether destroying training-label structure collapses performance.
         rng    = np.random.RandomState(fold_seed + 10000)
         y_perm = pd.Series(rng.permutation(y_train.values), index=y_train.index).astype(int)
 
-        perm_fold_cache = build_inner_fold_cache(X_train, y_perm, g_train, fold_seed)
+        try:
+            check_inner_cv_feasibility(
+                y_train=y_perm,
+                g_train=g_train,
+                n_splits=N_INNER_FOLDS,
+                context=f"Permutation check outer fold {fold_id}"
+            )
+        except ValueError as e:
+            logger.warning("Skipping permutation check for outer fold %d: %s", fold_id, e)
+            continue
+
+        perm_fold_cache    = build_inner_fold_cache(X_train, y_perm, g_train, fold_seed)
+        usable_perm_folds  = sum(f is not None for f in perm_fold_cache)
+
+        if usable_perm_folds == 0:
+            logger.warning(
+                "Skipping permutation check for outer fold %d: no usable inner folds after cache build.",
+                fold_id,
+            )
+            continue
 
         for model_name in MODEL_NAMES:
-            if model_name == "LR_L2":
-                best_params, oof_pr, _, _, thr = tune_lr_for_pr_auc(
-                    X_train, y_perm, g_train, seed=fold_seed, n_trials=PERM_N_TRIALS_LR, fold_cache=perm_fold_cache,
-                )
-            else:
-                best_params, oof_pr, _, _, thr = tune_xgb_for_pr_auc(
-                    X_train, y_perm, g_train, seed=fold_seed, n_trials=PERM_N_TRIALS_XGB, fold_cache=perm_fold_cache,
+            try:
+                if model_name == "LR_L2":
+                    best_params, oof_pr, _, _, thr = tune_lr_for_pr_auc(
+                        X_train, y_perm, g_train,
+                        seed=fold_seed,
+                        n_trials=PERM_N_TRIALS_LR,
+                        fold_cache=perm_fold_cache,
+                    )
+                else:
+                    best_params, oof_pr, _, _, thr = tune_xgb_for_pr_auc(
+                        X_train, y_perm, g_train,
+                        seed=fold_seed,
+                        n_trials=PERM_N_TRIALS_XGB,
+                        fold_cache=perm_fold_cache,
+                    )
+
+                metrics, _, _, _, _, _ = evaluate_on_outer_test(
+                    X_train, X_test, y_perm, y_test,
+                    model_name=model_name, seed=fold_seed, params=best_params, threshold=thr,
                 )
 
-            metrics, _, _, _, _, _ = evaluate_on_outer_test(
-                X_train, X_test, y_perm, y_test,
-                model_name=model_name, seed=fold_seed, params=best_params, threshold=thr,
-            )
+                rows.append({
+                    "Outer Fold":                         fold_id,
+                    "Model":                              model_name,
+                    "OOF PR-AUC (Permuted Train Labels)": float(oof_pr),
+                    "Held-Out Test PR-AUC":               float(metrics["PR-AUC (PRIMARY)"]),
+                    "AUC-ROC":                            float(metrics["AUC-ROC"]),
+                    "Brier Score":                        float(metrics["Brier Score"]),
+                    "F1":                                 float(metrics["F1"]),
+                    "Threshold":                          float(metrics["Threshold"]),
+                    "Features selected":                  int(metrics["Features selected"]),
+                })
 
-            rows.append({
-                "Outer Fold":                         fold_id,
-                "Model":                              model_name,
-                "OOF PR-AUC (Permuted Train Labels)": float(oof_pr),
-                "Held-Out Test PR-AUC":               float(metrics["PR-AUC (PRIMARY)"]),
-                "AUC-ROC":                            float(metrics["AUC-ROC"]),
-                "Brier Score":                        float(metrics["Brier Score"]),
-                "F1":                                 float(metrics["F1"]),
-                "Threshold":                          float(metrics["Threshold"]),
-                "Features selected":                  int(metrics["Features selected"]),
-            })
+            except Exception as e:
+                logger.warning(
+                    "Permutation check failed for model %s on outer fold %d: %s",
+                    model_name, fold_id, e,
+                )
+
+    if not rows:
+        logger.warning("Permutation check produced no usable results.")
+        return pd.DataFrame()
 
     return pd.DataFrame(rows)
 
@@ -2602,12 +2719,12 @@ def show_final_outputs_in_order(
 
 
 # Outer-fold preparation
-def _prepare_outer_folds(outer_cv, X, y, groups, outer_is_stratified, logs_dir):
+def _prepare_outer_folds(outer_cv, X, y, groups, outer_is_stratified, cache_dir):
 
     import pickle
 
-    outer_folds_pkl = os.path.join(logs_dir, "outer_folds.pkl")
-    fold_meta_json  = os.path.join(logs_dir, "outer_folds_meta.json")
+    outer_folds_pkl = os.path.join(cache_dir, "outer_folds.pkl")
+    fold_meta_json  = os.path.join(cache_dir, "outer_folds_meta.json")
 
     X_np = X.values; y_np = y.values; g_np = groups.values
 
@@ -2676,17 +2793,57 @@ def _run_one_outer_split(
         raise RuntimeError(f"Subject overlap in outer split {outer_idx}: {sorted(overlap)}")
     logger.info("Subject overlap check passed.")
 
-    check_inner_cv_feasibility(
-        y_train=y_train,
-        g_train=g_train,
-        n_splits=N_INNER_FOLDS,
-        context=f"Outer split {outer_idx}"
-    )
+    try:
+        check_inner_cv_feasibility(
+            y_train=y_train,
+            g_train=g_train,
+            n_splits=N_INNER_FOLDS,
+            context=f"Outer split {outer_idx}"
+        )
+    except ValueError as e:
+        logger.warning(
+            "Skipping outer split %d because inner CV is infeasible: %s",
+            outer_idx, e,
+        )
+        outer_summary = {
+            "outer_fold": outer_idx,
+            "fold_seed": fold_seed,
+            "X_train": X_train,
+            "X_test": X_test,
+            "y_train": y_train,
+            "y_test": y_test,
+            "g_train": g_train,
+            "g_test": g_test,
+            "skipped": True,
+            "skip_reason": str(e),
+        }
+        return [], [], [], {}, outer_summary
 
     logger.info("Building inner-fold cache for outer split %d...", outer_idx)
     fold_cache = build_inner_fold_cache(X_train, y_train, g_train, fold_seed)
     usable     = sum(f is not None for f in fold_cache)
     logger.info("Cache built (%d/%d usable inner folds).", usable, len(fold_cache))
+
+    if usable == 0:
+        reason = f"Outer split {outer_idx}: inner fold cache contained 0 usable folds."
+        logger.warning(
+            "Skipping outer split %d because no usable inner folds remained after cache build: %s",
+            outer_idx,
+            reason,
+        )
+        outer_summary = {
+            "outer_fold": outer_idx,
+            "fold_seed": fold_seed,
+            "X_train": X_train,
+            "X_test": X_test,
+            "y_train": y_train,
+            "y_test": y_test,
+            "g_train": g_train,
+            "g_test": g_test,
+            "skipped": True,
+            "skip_reason": reason,
+        }
+        return [], [], [], {}, outer_summary
 
     metrics_list      = []
     cms_list          = []
@@ -2696,51 +2853,80 @@ def _run_one_outer_split(
     for model_name in MODEL_NAMES:
         logger.info("Running %s on outer split %d ...", get_model_display_name(model_name), outer_idx)
 
-        if model_name == "LR_L2":
-            best_params, best_oof_pr, oof_probs, contributed, thr = tune_lr_for_pr_auc(
-                X_train, y_train, g_train, seed=fold_seed, n_trials=N_TRIALS_LR, fold_cache=fold_cache,
+        try:
+            if model_name == "LR_L2":
+                best_params, best_oof_pr, oof_probs, contributed, thr = tune_lr_for_pr_auc(
+                    X_train, y_train, g_train,
+                    seed=fold_seed,
+                    n_trials=N_TRIALS_LR,
+                    fold_cache=fold_cache,
+                )
+            else:
+                best_params, best_oof_pr, oof_probs, contributed, thr = tune_xgb_for_pr_auc(
+                    X_train, y_train, g_train,
+                    seed=fold_seed,
+                    n_trials=N_TRIALS_XGB,
+                    fold_cache=fold_cache,
+                )
+
+            metrics, cm, pipe, comb_mask, test_probs, test_preds = evaluate_on_outer_test(
+                X_train, X_test, y_train, y_test,
+                model_name=model_name, seed=fold_seed, params=best_params, threshold=thr,
             )
-        else:
-            best_params, best_oof_pr, oof_probs, contributed, thr = tune_xgb_for_pr_auc(
-                X_train, y_train, g_train, seed=fold_seed, n_trials=N_TRIALS_XGB, fold_cache=fold_cache,
+
+            metrics.update({
+                "Model": model_name,
+                "Outer Fold": outer_idx,
+                "Fold Seed": fold_seed,
+                "OOF PR-AUC": float(best_oof_pr),
+                "Params": str(best_params),
+                "OOF Coverage": float(contributed.mean()),
+                "Test Subjects":     int(g_test.nunique()),
+                "Pre-flare (n)":     int((y_test == 1).sum()),
+                "Non-pre-flare (n)": int((y_test == 0).sum()),
+            })
+            metrics_list.append(metrics)
+            cms_list.append(((outer_idx, model_name), cm))
+
+            run_store_entries[(outer_idx, model_name)] = {
+                "params": best_params,
+                "threshold": thr,
+                "pipe": pipe,
+                "comb_mask": comb_mask,
+                "test_probs": test_probs,
+                "test_preds": test_preds,
+                "cm": cm,
+                "oof_pr": float(best_oof_pr),
+                "oof_probs": oof_probs,
+                "oof_contributed": contributed,
+                "y_test": y_test,
+                "X_train": X_train,
+                "X_test": X_test,
+                "y_train": y_train,
+                "g_train": g_train,
+                "g_test": g_test,
+                "gene_cols": gene_cols,
+                "gene_name_map": gene_name_map,
+                "fold_seed": fold_seed,
+                "model_name": model_name,
+            }
+
+            row = {"Outer Fold": outer_idx, "Fold Seed": fold_seed}
+            row.update(best_params)
+            params_rows_list.append({"model_name": model_name, "row": row})
+
+            logger.info(
+                "%s | split %d: TEST PR-AUC=%.4f | OOF PR-AUC=%.4f | ROC-AUC=%.4f | F1=%.4f | coverage=%.1f%% | thr=%.2f",
+                get_model_display_name(model_name), outer_idx,
+                metrics["PR-AUC (PRIMARY)"], metrics["OOF PR-AUC"],
+                metrics["AUC-ROC"], metrics["F1"], metrics["OOF Coverage"] * 100, thr,
             )
 
-        metrics, cm, pipe, comb_mask, test_probs, test_preds = evaluate_on_outer_test(
-            X_train, X_test, y_train, y_test,
-            model_name=model_name, seed=fold_seed, params=best_params, threshold=thr,
-        )
-        metrics.update({
-            "Model": model_name, "Outer Fold": outer_idx, "Fold Seed": fold_seed,
-            "OOF PR-AUC": float(best_oof_pr), "Params": str(best_params),
-            "OOF Coverage": float(contributed.mean()),
-            "Test Subjects":     int(g_test.nunique()),
-            "Pre-flare (n)":     int((y_test == 1).sum()),
-            "Non-pre-flare (n)": int((y_test == 0).sum()),
-        })
-        metrics_list.append(metrics)
-        cms_list.append(((outer_idx, model_name), cm))
-
-        run_store_entries[(outer_idx, model_name)] = {
-            "params": best_params, "threshold": thr, "pipe": pipe,
-            "comb_mask": comb_mask, "test_probs": test_probs, "test_preds": test_preds,
-            "cm": cm, "oof_pr": float(best_oof_pr), "oof_probs": oof_probs,
-            "oof_contributed": contributed, "y_test": y_test,
-            "X_train": X_train, "X_test": X_test,
-            "y_train": y_train, "g_train": g_train, "g_test": g_test,
-            "gene_cols": gene_cols, "gene_name_map": gene_name_map,
-            "fold_seed": fold_seed, "model_name": model_name,
-        }
-
-        row = {"Outer Fold": outer_idx, "Fold Seed": fold_seed}
-        row.update(best_params)
-        params_rows_list.append({"model_name": model_name, "row": row})
-
-        logger.info(
-            "%s | split %d: TEST PR-AUC=%.4f | OOF PR-AUC=%.4f | ROC-AUC=%.4f | F1=%.4f | coverage=%.1f%% | thr=%.2f",
-            get_model_display_name(model_name), outer_idx,
-            metrics["PR-AUC (PRIMARY)"], metrics["OOF PR-AUC"],
-            metrics["AUC-ROC"], metrics["F1"], metrics["OOF Coverage"] * 100, thr,
-        )
+        except Exception as e:
+            logger.warning(
+                "%s failed on outer split %d and will be skipped: %s",
+                get_model_display_name(model_name), outer_idx, e,
+            )
 
     # Evaluate comparator models for this outer split:
     #   1) prevalence baseline
@@ -2798,55 +2984,62 @@ def _run_one_outer_split(
         X_train_sledai = X_sledai.iloc[tr_idx]
         X_test_sledai  = X_sledai.iloc[te_idx]
 
-        sledai_metrics, _, sledai_probs, _, _, sledai_oof_probs, sledai_contributed, sledai_best_c, sledai_best_oof_pr = evaluate_sledai_only_model(
-            X_train_sledai=X_train_sledai,
-            X_test_sledai=X_test_sledai,
-            y_train=y_train,
-            y_test=y_test,
-            g_train=g_train,
-            seed=fold_seed,
-        )
+        try:
+            sledai_metrics, _, sledai_probs, _, _, sledai_oof_probs, sledai_contributed, sledai_best_c, sledai_best_oof_pr = evaluate_sledai_only_model(
+                X_train_sledai=X_train_sledai,
+                X_test_sledai=X_test_sledai,
+                y_train=y_train,
+                y_test=y_test,
+                g_train=g_train,
+                seed=fold_seed,
+            )
 
-        sledai_metrics_row = {
-            "Outer Fold": outer_idx,
-            "Model": "SLEDAI_ONLY",
-            "Fold Seed": fold_seed,
-            "OOF PR-AUC": float(sledai_best_oof_pr) if pd.notna(sledai_best_oof_pr) else np.nan,
-            "OOF Coverage": (
-                float(sledai_contributed.mean())
-                if sledai_contributed is not None and len(sledai_contributed) > 0
-                else np.nan
-            ),
-            "Params": f"L2 logistic regression; C={float(sledai_best_c):.4g}; class_weight=balanced; single SLEDAI feature",
-            "PR-AUC (PRIMARY)": sledai_metrics["PR-AUC (PRIMARY)"],
-            "AUC-ROC": sledai_metrics["AUC-ROC"],
-            "Sensitivity": sledai_metrics["Sensitivity"],
-            "Precision": sledai_metrics["Precision"],
-            "Specificity": sledai_metrics["Specificity"],
-            "F1": sledai_metrics["F1"],
-            "Balanced Accuracy": sledai_metrics["Balanced Accuracy"],
-            "Brier Score": sledai_metrics["Brier Score"],
-            "Threshold": sledai_metrics["Threshold"],
-            "Features selected": sledai_metrics["Features selected"],
-            "Test Subjects": int(g_test.nunique()),
-            "Pre-flare (n)": int((y_test == 1).sum()),
-            "Non-pre-flare (n)": int((y_test == 0).sum()),
-        }
-        metrics_list.append(sledai_metrics_row)
+            sledai_metrics_row = {
+                "Outer Fold": outer_idx,
+                "Model": "SLEDAI_ONLY",
+                "Fold Seed": fold_seed,
+                "OOF PR-AUC": float(sledai_best_oof_pr) if pd.notna(sledai_best_oof_pr) else np.nan,
+                "OOF Coverage": (
+                    float(sledai_contributed.mean())
+                    if sledai_contributed is not None and len(sledai_contributed) > 0
+                    else np.nan
+                ),
+                "Params": f"L2 logistic regression; C={float(sledai_best_c):.4g}; class_weight=balanced; single SLEDAI feature",
+                "PR-AUC (PRIMARY)": sledai_metrics["PR-AUC (PRIMARY)"],
+                "AUC-ROC": sledai_metrics["AUC-ROC"],
+                "Sensitivity": sledai_metrics["Sensitivity"],
+                "Precision": sledai_metrics["Precision"],
+                "Specificity": sledai_metrics["Specificity"],
+                "F1": sledai_metrics["F1"],
+                "Balanced Accuracy": sledai_metrics["Balanced Accuracy"],
+                "Brier Score": sledai_metrics["Brier Score"],
+                "Threshold": sledai_metrics["Threshold"],
+                "Features selected": sledai_metrics["Features selected"],
+                "Test Subjects": int(g_test.nunique()),
+                "Pre-flare (n)": int((y_test == 1).sum()),
+                "Non-pre-flare (n)": int((y_test == 0).sum()),
+            }
+            metrics_list.append(sledai_metrics_row)
 
-        run_store_entries[(outer_idx, "SLEDAI_ONLY")] = {
-            "test_probs": sledai_probs,
-            "y_test": y_test.copy(),
-        }
+            run_store_entries[(outer_idx, "SLEDAI_ONLY")] = {
+                "test_probs": sledai_probs,
+                "y_test": y_test.copy(),
+            }
 
-        logger.info(
-            "%s | split %d: TEST PR-AUC=%.4f | ROC-AUC=%.4f | F1=%.4f | thr=%.2f",
-            "SLEDAI-only", outer_idx,
-            sledai_metrics["PR-AUC (PRIMARY)"],
-            sledai_metrics["AUC-ROC"],
-            sledai_metrics["F1"],
-            sledai_metrics["Threshold"],
-        )
+            logger.info(
+                "%s | split %d: TEST PR-AUC=%.4f | ROC-AUC=%.4f | F1=%.4f | thr=%.2f",
+                "SLEDAI-only", outer_idx,
+                sledai_metrics["PR-AUC (PRIMARY)"],
+                sledai_metrics["AUC-ROC"],
+                sledai_metrics["F1"],
+                sledai_metrics["Threshold"],
+            )
+
+        except Exception as e:
+            logger.warning(
+                "SLEDAI-only comparator skipped for outer split %d due to error: %s",
+                outer_idx, e,
+            )
     else:
         logger.info("SLEDAI-only comparator skipped for outer split %d (no SLEDAI column).", outer_idx)
 
@@ -2864,7 +3057,25 @@ def _run_one_outer_split(
 # =============================================================================
 def _generate_shap_outputs(run_store, gene_name_map, dirs):
 
-    fold_ids = list(range(1, N_OUTER_FOLDS + 1))
+    gene_model_keys = [(fold_id, model_name) for (fold_id, model_name) in run_store.keys() if model_name in MODEL_NAMES]
+    if not gene_model_keys:
+        logger.warning("No gene-expression model outputs available; skipping SHAP outputs.")
+        return {
+            "pr_curves_png": None,
+            "shap_bar_png": None,
+            "beeswarm_png": None,
+            "correct_oof_png": None,
+            "lr_shap_df": pd.DataFrame(),
+            "xgb_shap_df": pd.DataFrame(),
+            "lr_correct_df": pd.DataFrame(),
+            "xgb_correct_df": pd.DataFrame(),
+            "lr_shap_csv": None,
+            "xgb_shap_csv": None,
+            "lr_correct_csv": None,
+            "xgb_correct_csv": None,
+        }
+
+    fold_ids = sorted({fold_id for (fold_id, model_name) in run_store.keys()})
     results  = {}
 
     # Save SHAP-related CSVs for gene-expression models and generate summary figures.
@@ -2971,35 +3182,61 @@ def _export_summary_outputs(
 
     # Export best-parameter tables for the tuned gene-expression models.
     best_params_png = os.path.join(dirs["figures"], "02_best_hyperparameters_selected.png")
-    best_params_png = make_and_save_figure(
-        best_params_png,
-        plot_two_tables,
-        _transpose_params_df(lr_best_params_df),  "Logistic Regression L2",
-        _transpose_params_df(xgb_best_params_df), "XGBoost",
-        save_path=best_params_png,
-        fig_title="Best Hyperparameters Selected for Each Outer Training Fold",
-    )
+
+    if lr_best_params_df.empty or xgb_best_params_df.empty:
+        logger.warning(
+            "Best-hyperparameter figure skipped because one or more parameter tables are empty "
+            "(LR rows=%d, XGB rows=%d).",
+            len(lr_best_params_df),
+            len(xgb_best_params_df),
+        )
+        best_params_png = None
+    else:
+        best_params_png = make_and_save_figure(
+            best_params_png,
+            plot_two_tables,
+            _transpose_params_df(lr_best_params_df),  "Logistic Regression L2",
+            _transpose_params_df(xgb_best_params_df), "XGBoost",
+            save_path=best_params_png,
+            fig_title="Best Hyperparameters Selected for Each Outer Training Fold",
+        )
 
     cm_lr_png  = os.path.join(dirs["figures"], "03a_confusion_matrix_lr_l2.png")
     cm_xgb_png = os.path.join(dirs["figures"], "03b_confusion_matrix_xgb.png")
     # Export confusion-matrix figures for the gene-expression models.
-    cm_lr_png = make_and_save_figure(
-        cm_lr_png,
-        plot_confusion_matrices_one_model,
-        all_cms, list(range(1, N_OUTER_FOLDS + 1)), "LR_L2", cm_lr_png,
-    )
-    cm_xgb_png = make_and_save_figure(
-        cm_xgb_png,
-        plot_confusion_matrices_one_model,
-        all_cms, list(range(1, N_OUTER_FOLDS + 1)), "XGB", cm_xgb_png,
-    )
+    lr_cm_exists  = any(k[1] == "LR_L2" for k in all_cms.keys())
+    xgb_cm_exists = any(k[1] == "XGB"   for k in all_cms.keys())
+
+    if lr_cm_exists:
+        cm_lr_png = make_and_save_figure(
+            cm_lr_png,
+            plot_confusion_matrices_one_model,
+            all_cms, list(range(1, N_OUTER_FOLDS + 1)), "LR_L2", cm_lr_png,
+        )
+    else:
+        logger.warning("LR_L2 confusion-matrix figure skipped: no confusion matrices available.")
+        cm_lr_png = None
+
+    if xgb_cm_exists:
+        cm_xgb_png = make_and_save_figure(
+            cm_xgb_png,
+            plot_confusion_matrices_one_model,
+            all_cms, list(range(1, N_OUTER_FOLDS + 1)), "XGB", cm_xgb_png,
+        )
+    else:
+        logger.warning("XGB confusion-matrix figure skipped: no confusion matrices available.")
+        cm_xgb_png = None
 
     def _ms(s):
-        s = pd.to_numeric(s, errors="coerce")
-        mean_val, std_val, med_val = s.mean(skipna=True), s.std(skipna=True), s.median(skipna=True)
-        if pd.isna(mean_val):
+        s = pd.to_numeric(s, errors="coerce").dropna()
+        if s.empty:
             return "NA"
-        return f"{mean_val:.2f} ± {std_val if not pd.isna(std_val) else 0.0:.2f}\n({med_val:.2f})"
+        mean_val = s.mean()
+        std_val  = s.std()
+        med_val  = s.median()
+        if pd.isna(std_val):
+            std_val = 0.0
+        return f"{mean_val:.2f} ± {std_val:.2f}\n({med_val:.2f})"
 
     present_models = metrics_df["Model"].dropna().astype(str).unique().tolist()
     ordered_present_models = [m for m in ALL_REPORT_MODEL_NAMES if m in present_models]
@@ -3063,7 +3300,14 @@ def _export_summary_outputs(
                 oof_val,
             )
     logger.info("  Best model overall (held-out PR-AUC): %s", get_model_display_name(best_model_name))
-    logger.info("  Best gene-expression model (held-out PR-AUC): %s", get_model_display_name(best_gene_expression_model_name))
+
+    if best_gene_expression_model_name is not None:
+        logger.info(
+            "  Best gene-expression model (held-out PR-AUC): %s",
+            get_model_display_name(best_gene_expression_model_name),
+        )
+    else:
+        logger.info("  Best gene-expression model (held-out PR-AUC): not available")
 
     metrics_png = os.path.join(dirs["figures"], "06_final_average_classification_metrics.png")
     logger.info("=== SUMMARY TABLE MODELS: %s ===", list(summary_df.index))
@@ -3077,18 +3321,27 @@ def _export_summary_outputs(
     shap_paths = _generate_shap_outputs(run_store, gene_name_map, dirs)
 
     if RUN_PERMUTATION_CHECK:
-        permutation_df  = run_permutation_sanity_check_on_outer_test_folds(outer_summaries)
-        permutation_df  = round_numeric_df(permutation_df, 2)
-        permutation_csv = os.path.join(dirs["tables"],  "permutation_sanity_check.csv")
-        permutation_png = os.path.join(dirs["figures"], "10_permutation_sanity_check.png")
-        permutation_df.to_csv(permutation_csv, index=False)
-        permutation_png = make_and_save_figure(
-            permutation_png,
-            plot_permutation_table_top_bottom,
-            permutation_df, permutation_png,
-        )
+        permutation_df = run_permutation_sanity_check_on_outer_test_folds(outer_summaries)
+
+        if permutation_df is not None and not permutation_df.empty:
+            permutation_df  = round_numeric_df(permutation_df, 2)
+            permutation_csv = os.path.join(dirs["tables"],  "permutation_sanity_check.csv")
+            permutation_png = os.path.join(dirs["figures"], "10_permutation_sanity_check.png")
+            permutation_df.to_csv(permutation_csv, index=False)
+            permutation_png = make_and_save_figure(
+                permutation_png,
+                plot_permutation_table_top_bottom,
+                permutation_df, permutation_png,
+            )
+        else:
+            logger.warning("Permutation outputs skipped because no usable permutation results were produced.")
+            permutation_df  = pd.DataFrame()
+            permutation_csv = None
+            permutation_png = None
     else:
-        permutation_df = permutation_csv = permutation_png = None
+        permutation_df  = None
+        permutation_csv = None
+        permutation_png = None
 
     supp_cols = [
         "Outer Fold", "Model", "Test Subjects", "Pre-flare (n)", "Non-pre-flare (n)",
@@ -3097,19 +3350,30 @@ def _export_summary_outputs(
         "Balanced Accuracy", "Threshold", "Features selected",
     ]
     supp_df = metrics_df[[c for c in supp_cols if c in metrics_df.columns]].copy()
-    supp_df = supp_df.sort_values(["Model", "Outer Fold"]).reset_index(drop=True)
+    model_order_map = {
+        "LR_L2": 0,
+        "XGB": 1,
+        "BASELINE": 2,
+        "SLEDAI_ONLY": 3,
+    }
+    supp_df["_model_order"] = supp_df["Model"].map(model_order_map)
+    supp_df = supp_df.sort_values(["_model_order", "Outer Fold"]).drop(columns="_model_order").reset_index(drop=True)
     supp_df["Model"] = supp_df["Model"].map(lambda x: get_model_display_name(x) if x in MODEL_DISPLAY_NAMES else x)
     for col in [c for c in supp_df.columns if c not in ("Outer Fold", "Model", "Test Subjects", "Pre-flare (n)", "Non-pre-flare (n)")]:
         supp_df[col] = pd.to_numeric(supp_df[col], errors="coerce").round(2)
     supp_df = round_numeric_df(supp_df, 2)
 
-    per_fold_supp_png = os.path.join(dirs["figures"], "04_per_fold_held_out_test_metrics.png")
-    per_fold_supp_png = make_and_save_figure(
-        per_fold_supp_png,
-        plot_per_fold_metrics,
-        supp_df,
-        save_path=per_fold_supp_png,
-    )
+    if supp_df.empty:
+        logger.warning("Per-fold metrics figure skipped: supplementary metrics table is empty.")
+        per_fold_supp_png = None
+    else:
+        per_fold_supp_png = os.path.join(dirs["figures"], "04_per_fold_held_out_test_metrics.png")
+        per_fold_supp_png = make_and_save_figure(
+            per_fold_supp_png,
+            plot_per_fold_metrics,
+            supp_df,
+            save_path=per_fold_supp_png,
+        )
 
     output_dir = os.path.dirname(dirs["figures"])
     manifest   = {
@@ -3223,13 +3487,12 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
     """
     Run the full nested cross-validation pipeline and return a results dictionary.
 
-    Outputs are saved under:
-        output_dir/figures
-        output_dir/tables
-        output_dir/shap
-        output_dir/logs
+    Outputs are saved under a timestamped run directory:
+        output_dir/run_YYYYMMDD_HHMMSS/figures
+        output_dir/run_YYYYMMDD_HHMMSS/tables
+        output_dir/run_YYYYMMDD_HHMMSS/shap
+        output_dir/run_YYYYMMDD_HHMMSS/logs
     """
-    sns.set_theme(style="white", font_scale=1.4)
     plt.rcParams.update({
         "font.size":        TICK_LABEL_SIZE,
         "axes.titlesize":   SUBPLOT_TITLE_SIZE,
@@ -3241,45 +3504,66 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
     })
 
     seed_everything(GLOBAL_SEED)
-    dirs = _make_output_dirs(output_dir)
+    run_output_dir = make_run_output_dir(output_dir)
+    dirs = _make_output_dirs(run_output_dir)
+    logger.info("Run output directory: %s", run_output_dir)
 
-    clear_old_png_files(dirs["figures"])
+    cache_dir = make_cache_dir(output_dir)
 
     import time
     for dir_path in dirs.values():
         test_file = os.path.join(dir_path, '.write_test')
-        for attempt in range(12):
+        max_attempts = 6
+        wait_seconds = 3
+
+        for attempt in range(max_attempts):
             try:
-                with open(test_file, 'w') as f:
-                    f.write('ok')
+                with open(test_file, "w") as f:
+                    f.write("ok")
                 os.remove(test_file)
                 break
             except OSError:
-                if attempt == 11:
+                if attempt == max_attempts - 1:
                     raise RuntimeError(
-                        f'Output directory not writable after 60s: {dir_path}\n'
-                        f'Check that the output directory exists and is writable. '
-                        f'If using Google Drive, make sure Drive is fully mounted and synced.'
+                        f"Output directory is not writable: {dir_path}\n"
+                        f"Check that the directory exists and that you have write permission. "
+                        f"If using Google Drive, make sure Drive is mounted and available."
                     )
-                logger.info('Waiting for output directory access... (%ds)', (attempt + 1) * 5)
-                time.sleep(5)
+                logger.info("Output directory not ready yet; retrying...")
+                time.sleep(wait_seconds)
 
     outer_cv, outer_is_stratified = make_outer_cv()
     logger.info("Outer CV: %s", "StratifiedGroupKFold" if outer_is_stratified else "GroupKFold")
 
-    annotation_path = os.path.join(dirs["logs"], "GPL10558_probe_to_gene_symbol.csv")
-    if not os.path.exists(annotation_path):
-        logger.info("Annotation file not found; downloading now.")
+    annotation_path = ANNOTATION_PATH if ANNOTATION_PATH else os.path.join(
+        dirs["logs"], "GPL10558_probe_to_gene_symbol.csv"
+    )
+
+    if os.path.exists(annotation_path):
+        logger.info("Annotation file found locally: %s", annotation_path)
+    elif ALLOW_ANNOTATION_DOWNLOAD:
+        logger.info(
+            "Local annotation file not found. Optional GPL10558 annotation download is enabled; "
+            "if download fails, the pipeline will continue using probe IDs only."
+        )
         try:
             download_gpl_annotation(annotation_path)
         except Exception as e:
-            logger.warning("Annotation download failed. Proceeding with probe IDs only. Error: %s", e)
+            logger.warning(
+                "Optional annotation download failed; proceeding with probe IDs only. Error: %s",
+                e,
+            )
             annotation_path = None
     else:
-        logger.info("Annotation file found: %s", annotation_path)
+        logger.info(
+            "No local annotation file found. Proceeding with probe IDs only "
+            "(annotation download is disabled)."
+        )
+        annotation_path = None
 
-    X, y, groups, gene_cols, sample_ids = load_data(data_filepath)
-    X_sledai, y_sledai, groups_sledai, sledai_col = load_sledai_feature(data_filepath)
+    df = load_raw_dataframe(data_filepath)
+    X, y, groups, gene_cols, sample_ids = load_data(df)
+    X_sledai, y_sledai, groups_sledai, sledai_col = load_sledai_feature(df)
     if sledai_col is not None:
         logger.info("SLEDAI comparator will use column: %s", sledai_col)
     else:
@@ -3303,7 +3587,7 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
     )
 
     fold_indices, outer_folds_pkl, fold_meta_json = _prepare_outer_folds(
-        outer_cv, X, y, groups, outer_is_stratified, dirs["logs"],
+        outer_cv, X, y, groups, outer_is_stratified, cache_dir,
     )
 
     # Preserve original sample IDs in the fold assignment exports.
@@ -3319,6 +3603,8 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
                     "outer_fold": outer_idx,
                     "split": split_label,
                 })
+    if len(fold_assignment_rows) == 0:
+        raise ValueError("No outer fold assignments were generated.")
     pd.DataFrame(fold_assignment_rows).to_csv(
         os.path.join(dirs["tables"], "outer_fold_membership_all_splits.csv"), index=False,
     )
@@ -3331,6 +3617,8 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
                 "label": int(y.iloc[i]),
                 "outer_fold_test": outer_idx,
             })
+    if len(test_assignment_rows) == 0:
+        raise ValueError("No outer test assignments were generated.")
     pd.DataFrame(test_assignment_rows).to_csv(
         os.path.join(dirs["tables"], "outer_fold_test_assignments.csv"), index=False,
     )
@@ -3356,8 +3644,41 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
         outer_summaries.append(outer_summary)
 
     metrics_df = pd.DataFrame(all_metrics)
+    if metrics_df.empty:
+        skipped_msgs = []
+        for item in outer_summaries:
+            if item.get("skipped", False):
+                skipped_msgs.append(
+                    f"Outer fold {item.get('outer_fold')}: {item.get('skip_reason', 'unknown reason')}"
+                )
+
+        details = "\n".join(skipped_msgs) if skipped_msgs else "No additional skip details available."
+
+        raise ValueError(
+            "No usable outer folds were completed. "
+            "All folds were skipped or failed.\n\n"
+            "Possible fix: reduce N_INNER_FOLDS.\n\n"
+            f"Details:\n{details}"
+        )
     logger.info("=== MODELS IN metrics_df: %s ===", sorted(metrics_df["Model"].unique().tolist()))
     metrics_df.to_csv(os.path.join(dirs["tables"], "metrics_outer_test_folds.csv"), index=False)
+
+    skipped_outer_folds = [
+        {
+            "outer_fold": item.get("outer_fold"),
+            "fold_seed": item.get("fold_seed"),
+            "skipped": item.get("skipped", False),
+            "skip_reason": item.get("skip_reason", ""),
+        }
+        for item in outer_summaries
+        if item.get("skipped", False)
+    ]
+
+    if skipped_outer_folds:
+        pd.DataFrame(skipped_outer_folds).to_csv(
+            os.path.join(dirs["tables"], "skipped_outer_folds.csv"),
+            index=False,
+        )
 
     # Check OOF coverage for models that use inner-fold validation.
     coverage_models = MODEL_NAMES + ["SLEDAI_ONLY"]
@@ -3398,9 +3719,13 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
     ).dropna()
 
     if mean_test_pr_auc_gene.empty:
-        raise ValueError("Could not determine best gene-expression model because all mean PR-AUC values are NaN.")
-
-    best_gene_expression_model_name = mean_test_pr_auc_gene.sort_values(ascending=False).index[0]
+        logger.warning(
+            "No usable gene-expression model results were available. "
+            "Gene-model-specific ranking will be reported as unavailable."
+        )
+        best_gene_expression_model_name = None
+    else:
+        best_gene_expression_model_name = mean_test_pr_auc_gene.sort_values(ascending=False).index[0]
 
     return _export_summary_outputs(
         metrics_df, run_store, best_model_name, outer_summaries,
@@ -3442,6 +3767,18 @@ def main():
                             help="Root output directory (default: %(default)s)")
         args = parser.parse_args()
         results = run_pipeline(args.data, output_dir=args.out)
+    logger.info("Pipeline completed successfully.")
+    if isinstance(results, dict):
+        logger.info(
+            "Best overall model: %s",
+            get_model_display_name(results.get("highest_mean_pr_auc_model", "unknown"))
+        )
+        best_gene = results.get("highest_mean_pr_auc_gene_model", None)
+        if best_gene is not None:
+            logger.info(
+                "Best gene-expression model: %s",
+                get_model_display_name(best_gene)
+            )
     return results
 
 
