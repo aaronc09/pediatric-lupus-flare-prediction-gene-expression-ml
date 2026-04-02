@@ -1,7 +1,7 @@
 # =========================================================
 # Author: Aaron Choi
 # Project: Pediatric Lupus Flare Prediction (GSE65391)
-# File: build_lupus_dataframe.py
+# File: build_lupus_dataset.py
 #
 # Build an analysis-ready visit-paired dataset from the pediatric lupus
 # gene-expression study GSE65391.
