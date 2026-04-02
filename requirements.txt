@@ -1,11 +1,11 @@
 numpy==2.0.2
 pandas==2.2.2
+matplotlib==3.9.2
 scikit-learn==1.5.2
 xgboost==2.1.1
 shap==0.46.0
 optuna==4.0.0
-matplotlib==3.9.2
-seaborn==0.13.2
 requests==2.32.4
 pyarrow==17.0.0
 openpyxl==3.1.5
+pillow<12
