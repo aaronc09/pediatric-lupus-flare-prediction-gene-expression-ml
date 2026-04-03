@@ -81,10 +81,11 @@ Preprocessed Data
 ## Run in Google Colab
 
 Step 1: Preprocessing  
-https://colab.research.google.com/github/aaronc09/pediatric-lupus-flare-prediction-gene-expression-ml/blob/main/notebooks/01_build_lupus_dataset_colab.ipynb  
+https://colab.research.google.com/github/aaronc09/pediatric-lupus-flare-prediction-gene-expression-ml/blob/main/notebooks/01_build_lupus_dataset_colab.ipynb 
 
 Step 2: Machine Learning Pipeline  
-https://colab.research.google.com/github/aaronc09/pediatric-lupus-flare-prediction-gene-expression-ml/blob/main/notebooks/02_run_ml_pipeline_colab.ipynb  
+https://colab.research.google.com/github/aaronc09/pediatric-lupus-flare-prediction-gene-expression-ml/blob/main/notebooks/02_run_lupus_ml_pipeline_colab.ipynb
+
 
 Run Step 1 first, then Step 2.
 
