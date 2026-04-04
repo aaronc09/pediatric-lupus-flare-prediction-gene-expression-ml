@@ -75,6 +75,7 @@ Preprocessed Data
 - Gene-expression models provide limited improvement over clinical signal  
 - SLEDAI-only performs comparably or better across several metrics  
 - Predictive signal is modest and highly variable across folds  
+- Biological heterogeneity of SLE may dilute consistent gene-expression signals across patients  
 
 → Gene-expression data alone is insufficient for strong flare prediction in this setting  
 
