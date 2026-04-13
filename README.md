@@ -120,10 +120,6 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Tested with:
-
-* Python 3.12.x
-
 ## Environment
 
 Tested with:
