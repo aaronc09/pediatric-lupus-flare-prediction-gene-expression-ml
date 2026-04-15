@@ -163,7 +163,6 @@ Tested with:
 * outputs/ — figures, tables, SHAP, logs
 
 ## Citation
-
 Choi A. *Pediatric Systemic Lupus Erythematosus Flare Prediction Using Gene-Expression Data and Machine Learning*. 2026.
 
 ## License
