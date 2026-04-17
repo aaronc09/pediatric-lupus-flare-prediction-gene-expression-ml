@@ -17,11 +17,25 @@ __pycache__/
 # Temporary scripts
 *_colab_run.py
 
-# Outputs (ML runs, figures, logs, SHAP, etc.)
-outputs/ml_outputs/
 
-# Data artifacts
-outputs/*.pkl
-outputs/*.parquet
-outputs/*.csv.gz
-outputs/*.json
+# =========================
+# Outputs (ML experiments)
+# =========================
+
+# Ignore everything in outputs
+outputs/*
+
+# Re-allow folders so Git can traverse
+!outputs/
+!outputs/ml_outputs/
+!outputs/ml_outputs/figures/
+!outputs/ml_outputs/figures/**
+
+# =========================
+# Data artifacts (large files)
+# =========================
+
+outputs/**/*.pkl
+outputs/**/*.parquet
+outputs/**/*.csv.gz
+outputs/**/*.json
