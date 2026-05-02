@@ -55,13 +55,11 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-# Enforce 600 DPI globally for ALL saved figures
 matplotlib.rcParams["figure.dpi"] = 600
 matplotlib.rcParams["savefig.dpi"] = 600
 
 import matplotlib.pyplot as plt
 
-# Prevent automatic rendering (cleaner for pipelines)
 plt.ioff()
 
 
@@ -80,10 +78,8 @@ def save_figure(fig, save_path, is_beeswarm=False):
     base, _ = os.path.splitext(save_path)
 
     if is_beeswarm:
-        # Raster image (required for dense SHAP beeswarm)
         fig.savefig(base + ".png", dpi=600, bbox_inches="tight")
     else:
-        # Vector format (preferred for plots/tables)
         fig.savefig(base + ".pdf", bbox_inches="tight")
 
     plt.close(fig)
@@ -118,9 +114,6 @@ from optuna.pruners import MedianPruner
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-# =============================================================================
-# Logging
-# =============================================================================
 logger = logging.getLogger("lupus_nested_cv_pipeline")
 logger.setLevel(logging.INFO)
 logger.handlers.clear()
@@ -136,9 +129,6 @@ logger.info("optuna       : %s", optuna.__version__)
 logger.info("python       : %s", sys.version)
 logger.info("platform     : %s", platform.platform())
 
-# =============================================================================
-# Configuration
-# =============================================================================
 GLOBAL_SEED = 42
 
 DEFAULT_DATA_PATH  = "outputs/lupus_final_df.pkl"
@@ -181,8 +171,8 @@ POS_CLASS_DISPLAY = CLASS_NAMES_DISPLAY[1]
 POSITIVE_CLASS_NAME = POS_CLASS_DISPLAY
 NEGATIVE_CLASS_NAME = NEG_CLASS_DISPLAY
 
-MODEL_NAMES = ["LR_L2", "XGB"]  # main gene-expression models
-COMPARATOR_MODEL_NAMES = ["BASELINE", "SLEDAI_ONLY"]  # comparator models
+MODEL_NAMES = ["LR_L2", "XGB"]
+COMPARATOR_MODEL_NAMES = ["BASELINE", "SLEDAI_ONLY"]
 ALL_REPORT_MODEL_NAMES = MODEL_NAMES + COMPARATOR_MODEL_NAMES
 
 MODEL_DISPLAY_NAMES = {
@@ -215,7 +205,7 @@ LEGEND_SIZE        = 16
 ALLOW_ANNOTATION_DOWNLOAD = os.environ.get("LUPUS_ALLOW_ANNOTATION_DOWNLOAD", "1") == "1"
 ANNOTATION_PATH = os.environ.get("LUPUS_ANNOTATION_PATH", "")
 
-DISPLAY_FIGURES_IN_NOTEBOOK = False # If True, display figures inline in Jupyter/Colab
+DISPLAY_FIGURES_IN_NOTEBOOK = False
 
 
 def _make_output_dirs(base: str) -> dict:
@@ -252,6 +242,11 @@ def make_and_save_figure(fig_path: str | None, plot_func, *args, **kwargs):
     """
     fig = plot_func(*args, **kwargs)
 
+    if isinstance(fig, str):
+        raise TypeError(
+            f"Plot function returned a string instead of a matplotlib Figure: {fig}"
+        )
+
     if fig is None:
         fig = plt.gcf()
 
@@ -274,7 +269,6 @@ def make_and_save_figure(fig_path: str | None, plot_func, *args, **kwargs):
     return None
 
 
-# Basic helper functions
 def seed_everything(seed: int) -> None:
     os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
@@ -320,12 +314,7 @@ def make_gene_label(probe_id: object, gene_name_map: dict) -> str:
     return f"{probe_id} ({gene_name})"
 
 
-# =============================================================================
-# Model-building helper functions
-# =============================================================================
-
 def build_lr_selector(C: float, seed: int) -> LogisticRegression:
-    """L1 logistic regression for feature selection."""
     return LogisticRegression(
         penalty="l1", solver="liblinear", C=C,
         max_iter=2000, random_state=seed, class_weight="balanced",
@@ -333,7 +322,6 @@ def build_lr_selector(C: float, seed: int) -> LogisticRegression:
 
 
 def build_lr_clf(C: float, seed: int) -> LogisticRegression:
-    """L2 logistic regression for the final model."""
     return LogisticRegression(
         penalty="l2", solver="lbfgs", C=C,
         max_iter=5000, random_state=seed, class_weight="balanced",
@@ -341,7 +329,6 @@ def build_lr_clf(C: float, seed: int) -> LogisticRegression:
 
 
 def build_xgb_selector(seed: int, spw: float) -> xgb.XGBClassifier:
-    """XGBoost model for feature ranking before final fitting."""
     return xgb.XGBClassifier(
         n_estimators=60, max_depth=2, learning_rate=0.08,
         subsample=0.8, colsample_bytree=0.7, reg_lambda=1.0,
@@ -353,7 +340,6 @@ def build_xgb_selector(seed: int, spw: float) -> xgb.XGBClassifier:
 
 
 def build_xgb_clf(params: dict, seed: int, spw: float) -> xgb.XGBClassifier:
-    """Build the final XGBoost model with tuned parameters."""
     return xgb.XGBClassifier(
         n_estimators=params["n_estimators"],
         max_depth=params["max_depth"],
@@ -372,9 +358,7 @@ def build_xgb_clf(params: dict, seed: int, spw: float) -> xgb.XGBClassifier:
     )
 
 
-# Hyperparameter search-space tables
 def get_search_space_tables():
-    """Create tables showing the Optuna search space for LR_L2 and XGB."""
     lr_table = pd.DataFrame({
         "Parameter":    ["lasso_c", "l2_c"],
         "Search space": [
@@ -405,9 +389,6 @@ def get_search_space_tables():
     return {"LR_L2": lr_table, "XGB": xgb_table}
 
 
-# =============================================================================
-# Data validation and loading
-# =============================================================================
 def validate_data(X: pd.DataFrame, y: pd.Series, groups: pd.Series) -> None:
     errors = []
 
@@ -489,13 +470,6 @@ def load_raw_dataframe(filepath: str) -> pd.DataFrame:
 
 
 def load_data(df: pd.DataFrame):
-    """
-    Load the processed lupus dataset from a dataframe.
-
-    Returns X, y, groups, gene_cols, and sample_ids.
-    Raises ValueError if required columns are missing.
-    """
-
     if "preflare_bool" not in df.columns or "subject" not in df.columns:
         raise ValueError("Missing required columns: need 'preflare_bool' and 'subject'")
 
@@ -509,7 +483,7 @@ def load_data(df: pd.DataFrame):
     y      = df["preflare_bool"].astype(int)
     groups = df["subject"].astype(str)
 
-    sample_ids = X.index.astype(str).tolist()  # keep original sample IDs for fold export
+    sample_ids = X.index.astype(str).tolist()
 
     if (not pd.api.types.is_integer_dtype(X.index)) or X.index.duplicated().any():
         logger.info("Resetting row index to 0..N-1 for compatibility.")
@@ -532,14 +506,6 @@ def load_data(df: pd.DataFrame):
 
 
 def load_sledai_feature(df: pd.DataFrame, candidate_cols=None, preferred_col=None):
-    """
-    Load one SLEDAI column from the dataset.
-
-    The function first checks exact candidate column names.
-    If none are found, it looks for other numeric columns
-    whose names contain 'sledai'. If more than one possible
-    match is found, preferred_col must be provided.
-    """
     if candidate_cols is None:
         candidate_cols = [
             "SLEDAI",
@@ -638,15 +604,7 @@ def load_sledai_feature(df: pd.DataFrame, candidate_cols=None, preferred_col=Non
     return X_sledai.astype(np.float32), y, groups, found
 
 
-# Probe annotation helpers
 def download_gpl_annotation(save_csv_path: str):
-    """
-    Download the GPL10558 probe-to-gene annotation from GEO and save it as a CSV file.
-
-    Notes:
-    - This is optional and only used when LUPUS_ALLOW_ANNOTATION_DOWNLOAD=1.
-    - Requires internet access and the 'requests' package to be installed.
-    """
     try:
         import requests
     except ImportError as e:
@@ -735,7 +693,6 @@ def load_gene_name_map(probe_ids: list, annotation_path: str | None) -> dict:
 
 
 def dataset_fingerprint(X: pd.DataFrame, groups: pd.Series, y: pd.Series) -> str:
-    """Build a hash so cached outer folds can be checked against the current dataset."""
     import hashlib
     payload = pd.DataFrame({
         "row_index": X.index.astype(str),
@@ -747,9 +704,7 @@ def dataset_fingerprint(X: pd.DataFrame, groups: pd.Series, y: pd.Series) -> str
     return hashlib.sha256(txt.encode("utf-8")).hexdigest()
 
 
-# Cross-validation setup helpers
 def make_outer_cv():
-    """Create the outer cross-validation splitter, using StratifiedGroupKFold when available."""
     if StratifiedGroupKFold is not None:
         return StratifiedGroupKFold(
             n_splits=N_OUTER_FOLDS, shuffle=True, random_state=OUTER_MASTER_SEED,
@@ -768,7 +723,6 @@ def make_outer_cv():
     return GroupKFold(n_splits=N_OUTER_FOLDS), False
 
 
-# Feature-selection helpers
 def fit_variance_filter(Xtr_np, thresh=VAR_THRESH):
     vt      = VarianceThreshold(threshold=thresh)
     Xtr_v   = vt.fit_transform(Xtr_np)
@@ -791,12 +745,6 @@ def apply_univariate_prefilter(skb, X_np):
 
 
 def lasso_select_mask(Xtr_pf, ytr, seed, lasso_c, min_features=MIN_FALLBACK_FEATURES):
-    """
-    Run L1 feature selection.
-
-    If all coefficients are zero, keep the features with the
-    largest absolute coefficients instead.
-    """
     scaler = StandardScaler()
     Xtr_s  = scaler.fit_transform(Xtr_pf)
 
@@ -860,9 +808,6 @@ def _make_inner_cv(seed: int):
 
 
 def check_inner_cv_feasibility(y_train: pd.Series, g_train: pd.Series, n_splits: int, context: str = "") -> None:
-    """
-    Make sure the current outer-training split can support grouped inner CV.
-    """
     n_subjects   = g_train.nunique()
     pos_subjects = g_train[y_train == 1].nunique()
     neg_subjects = g_train[y_train == 0].nunique()
@@ -885,7 +830,6 @@ def check_inner_cv_feasibility(y_train: pd.Series, g_train: pd.Series, n_splits:
         )
 
 
-# Inner-fold checks, caching, and scoring
 def _log_fold_class_counts(split_label: str, y_arr: np.ndarray, fold_idx: int) -> bool:
     n_pos        = int((y_arr == 1).sum())
     n_neg        = int((y_arr == 0).sum())
@@ -901,13 +845,6 @@ def _log_fold_class_counts(split_label: str, y_arr: np.ndarray, fold_idx: int) -
 
 
 def build_inner_fold_cache(X_train, y_train, g_train, seed):
-    """
-    Build cached inner-fold objects after variance filtering,
-    univariate prefiltering, and scaling.
-
-    Returns a list of per-fold dictionaries. If an inner split
-    has only one class, that fold is stored as None.
-    """
     cv, _ = _make_inner_cv(seed)
 
     X_np = X_train.values
@@ -979,14 +916,6 @@ def build_inner_fold_cache(X_train, y_train, g_train, seed):
 
 
 def cv_oof_probs_pr_auc_from_cache(fold_cache, y_train, model_name, seed, params, trial=None):
-    """
-    Get inner-fold OOF predicted probabilities from cached folds.
-
-    Returns:
-        oof_probs, oof_pr_auc, contributed_mask
-
-    If an Optuna trial is provided, pruning can be applied during XGBoost tuning.
-    """
     y_np        = y_train.values
     oof_probs   = np.zeros(len(y_np), dtype=float)
     contributed = np.zeros(len(y_np), dtype=bool)
@@ -1054,12 +983,6 @@ def cv_oof_probs_pr_auc_from_cache(fold_cache, y_train, model_name, seed, params
 
 
 def tune_lr_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=None):
-    """
-    Tune LR_L2 using inner-CV OOF PR-AUC.
-
-    Returns:
-        best_params, best_pr_auc, best_oof_probs, best_contributed, best_threshold
-    """
     if fold_cache is None:
         fold_cache = build_inner_fold_cache(X_train, y_train, g_train, seed)
 
@@ -1085,8 +1008,6 @@ def tune_lr_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=Non
     best_contributed = np.array(study.best_trial.user_attrs["contributed"])
     y_np             = y_train.values
 
-    # Threshold is selected from inner OOF predictions by maximizing F1.
-    # This threshold is then fixed before evaluation on the outer test fold.
     if best_contributed.sum() >= 2 and len(np.unique(y_np[best_contributed])) >= 2:
         best_threshold, _ = choose_threshold_max_f1(y_np[best_contributed], best_oof_probs[best_contributed])
     else:
@@ -1102,19 +1023,12 @@ def tune_lr_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=Non
 
 
 def tune_xgb_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=None):
-    """
-    Tune XGBoost using inner-CV OOF PR-AUC.
-
-    Returns:
-        best_params, best_pr_auc, best_oof_probs, best_contributed, best_threshold
-    """
     if fold_cache is None:
         fold_cache = build_inner_fold_cache(X_train, y_train, g_train, seed)
 
     if len(fold_cache) == 0 or all(f is None for f in fold_cache):
         raise ValueError("XGB tuning failed: no usable inner folds available.")
 
-    # Use MedianPruner for XGBoost trials only.
     study = optuna.create_study(
         direction="maximize",
         sampler=TPESampler(seed=seed),
@@ -1151,8 +1065,6 @@ def tune_xgb_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=No
     best_contributed = np.array(study.best_trial.user_attrs["contributed"])
     y_np             = y_train.values
 
-    # Threshold is selected from inner OOF predictions by maximizing F1.
-    # This threshold is then fixed before evaluation on the outer test fold.
     if best_contributed.sum() >= 2 and len(np.unique(y_np[best_contributed])) >= 2:
         best_threshold, _ = choose_threshold_max_f1(y_np[best_contributed], best_oof_probs[best_contributed])
     else:
@@ -1162,7 +1074,6 @@ def tune_xgb_for_pr_auc(X_train, y_train, g_train, seed, n_trials, fold_cache=No
 
 
 def fit_final_model_on_full_train(X_train, y_train, model_name, seed, params):
-    """Fit the final model on the full outer-train split."""
     Xtr = X_train.values
     ytr = y_train.values
 
@@ -1222,7 +1133,6 @@ def transform_with_pipe(X, pipe):
 
 
 def evaluate_on_outer_test(X_train, X_test, y_train, y_test, model_name, seed, params, threshold):
-    """Fit the model on the outer-training split and evaluate it on the outer-test split."""
     pipe = fit_final_model_on_full_train(X_train, y_train, model_name, seed, params)
 
     Xte_s, comb_mask = transform_with_pipe(X_test, pipe)
@@ -1279,13 +1189,6 @@ def compute_binary_metrics_from_probs(y_true, probs, threshold, n_features=0):
 
 
 def evaluate_baseline_on_outer_test(y_train, y_test):
-    """
-    Constant-probability prevalence baseline.
-
-    Each test sample receives the same predicted probability, equal to the
-    pre-flare prevalence in the outer-training split. This is a deterministic
-    prevalence baseline, not a random classifier.
-    """
     ytr = np.asarray(y_train).astype(int)
     yte = np.asarray(y_test).astype(int)
 
@@ -1304,7 +1207,6 @@ def evaluate_baseline_on_outer_test(y_train, y_test):
 
 
 def median_impute_train_test(train_df, test_df):
-    """Median-impute train and test data using medians from the training split only."""
     train_df = train_df.copy()
     test_df = test_df.copy()
     medians = train_df.median(axis=0)
@@ -1316,12 +1218,6 @@ def median_impute_train_test(train_df, test_df):
 
 
 def tune_sledai_only_model(X_train_sledai, y_train, g_train, seed, c_grid=None):
-    """
-    Tune a logistic regression model using only the SLEDAI feature with grouped inner CV.
-
-    Returns:
-        best_C, best_oof_probs, best_contributed, best_threshold, best_oof_pr
-    """
     if c_grid is None:
         c_grid = [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
 
@@ -1410,7 +1306,6 @@ def tune_sledai_only_model(X_train_sledai, y_train, g_train, seed, c_grid=None):
 
 
 def evaluate_sledai_only_model(X_train_sledai, X_test_sledai, y_train, y_test, g_train, seed):
-    """Evaluate the SLEDAI-only model with grouped nested CV."""
     Xtr_df = X_train_sledai.copy()
     Xte_df = X_test_sledai.copy()
     ytr = y_train.values.astype(int)
@@ -1464,9 +1359,6 @@ def evaluate_sledai_only_model(X_train_sledai, X_test_sledai, y_train, y_test, g
     return metrics, cm, test_probs, preds, threshold, oof_probs, contributed, best_c, best_oof_pr
 
 
-# =============================================================================
-# Table and figure helpers
-# =============================================================================
 def wrap_text(x, width=18):
     if pd.isna(x):
         return ""
@@ -1754,11 +1646,7 @@ def plot_confusion_matrices_one_model(all_cms, fold_ids, model_name, save_path):
 
 
 def plot_metrics_table(summary_df, save_path):
-    """Render mean ± SD and median metrics for all models in summary_df as a formatted table."""
 
-    # -----------------------------
-    # Clean display values
-    # -----------------------------
     summary_df = summary_df.copy()
 
     METRIC_DISPLAY = {
@@ -1799,7 +1687,6 @@ def plot_metrics_table(summary_df, save_path):
 
     n_models = len(model_display_names)
 
-    # Use blank placeholders for colLabels — real multi-line text set manually after table creation
     columns = ["Metric"] + [" "] * (n_models * 2)
 
     n_data_rows = len(data)
@@ -1808,7 +1695,6 @@ def plot_metrics_table(summary_df, save_path):
 
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     ax.axis("off")
-    return fig
 
     metric_w = 0.16
     pair_w = (1.0 - metric_w) / max(n_models, 1)
@@ -1853,7 +1739,6 @@ def plot_metrics_table(summary_df, save_path):
             cell.set_facecolor("#F7F7F7" if col == 0 else "#FFFFFF")
             cell.set_height(0.082)
 
-    # Abbreviated header names — split across 3 lines so text wraps inside narrow cells
     ABBREV = {
         "Logistic Regression L2": "LR (L2)",
         "XGBoost":                "XGB",
@@ -1861,7 +1746,6 @@ def plot_metrics_table(summary_df, save_path):
         "SLEDAI-only":            "SLEDAI",
     }
 
-    # Set header text manually so \n renders as a real newline in the cell
     tbl[0, 0].get_text().set_text("Metric")
     for i, name in enumerate(model_display_names):
         mean_col   = 1 + i * 2
@@ -1880,7 +1764,6 @@ def plot_metrics_table(summary_df, save_path):
     tbl[0, 0].get_text().set_va("center")
     tbl[0, 0].get_text().set_ha("center")
 
-    # Increase header row height to fit 3 lines of text
     for c in range(len(columns)):
         if (0, c) in tbl.get_celld():
             tbl[0, c].set_height(0.26)
@@ -1893,15 +1776,10 @@ def plot_metrics_table(summary_df, save_path):
     )
 
     plt.tight_layout(rect=[0, 0, 1, 0.98])
-    save_figure(fig, save_path)
-    plt.close(fig)
+    return fig
 
 
 def plot_per_fold_metrics(supp_df, save_path):
-    """
-    Plot per-fold held-out test metrics for all models.
-    Gene-expression models are shown first, followed by comparator models.
-    """
     supp_df = round_numeric_df(supp_df, 2)
     METRIC_DISPLAY = {
         "PR-AUC (PRIMARY)":  "PR-AUC",
@@ -1927,7 +1805,6 @@ def plot_per_fold_metrics(supp_df, save_path):
     ]
     count_metrics = {"Test Subjects", "Pre-flare (n)", "Non-pre-flare (n)", "Features selected"}
 
-    # Display order: gene-expression models first, then comparators
     MODEL_ORDER_FOR_FIGURE = [
         get_model_display_name("LR_L2"),
         get_model_display_name("XGB"),
@@ -2019,16 +1896,10 @@ def plot_per_fold_metrics(supp_df, save_path):
     for ax, model_name in zip(axes, models):
         _render_table(ax, model_name)
     plt.tight_layout(rect=[0, 0, 1, 0.985], h_pad=0.35)
-    save_figure(plt.gcf(), save_path)
-    plt.close(fig)
+    return fig
 
 
-# Permutation sanity check plotting
 def plot_permutation_table_top_bottom(perm_df, save_path):
-    """
-    Plot permutation-label sanity check results as two tables
-    (LR_L2 above XGB), with metrics as rows and folds as columns.
-    """
     perm_df = round_numeric_df(perm_df, 2)
     METRIC_DISPLAY = {
         "OOF PR-AUC (Permuted Train Labels)": "OOF PR-AUC\n(Permuted Labels)",
@@ -2113,13 +1984,9 @@ def plot_permutation_table_top_bottom(perm_df, save_path):
             ax.set_title(get_model_display_name(model_name), fontsize=34, fontweight="bold", pad=12)
 
     plt.tight_layout(rect=[0, 0, 1, 0.965], h_pad=2.8)
-    save_figure(plt.gcf(), save_path)
-    plt.close(fig)
+    return fig
 
 
-# =============================================================================
-# PR-curve and SHAP analysis
-# =============================================================================
 def _draw_pr_auc_on_ax(ax, run_store, model_name, fold_ids):
     all_y_true = []
     for fold_id in fold_ids:
@@ -2151,16 +2018,6 @@ def _draw_pr_auc_on_ax(ax, run_store, model_name, fold_ids):
 
 
 def plot_pr_auc_curves(run_store, fold_ids, save_path):
-    """
-    Plot held-out outer-test precision-recall curves for the selected models.
-
-    Layout:
-        top-left: LR_L2
-        top-right: XGB
-        bottom-left: SLEDAI_ONLY
-        bottom-right: empty
-    """
-    # Plot PR curves for LR_L2, XGB, and SLEDAI_ONLY.
     models_to_plot = [m for m in MODEL_NAMES + ["SLEDAI_ONLY"] if any((fid, m) in run_store for fid in fold_ids)]
 
     if len(models_to_plot) == 0:
@@ -2175,7 +2032,6 @@ def plot_pr_auc_curves(run_store, fold_ids, save_path):
         "SLEDAI_ONLY": axes[1, 0],
     }
 
-    # Leave the lower-right panel empty to preserve the 2x2 layout.
     axes[1, 1].axis("off")
 
     for model_name in models_to_plot:
@@ -2190,9 +2046,7 @@ def plot_pr_auc_curves(run_store, fold_ids, save_path):
     )
 
     plt.tight_layout()
-    save_figure(plt.gcf(), save_path)
-    plt.close(fig)
-    return save_path
+    return fig
 
 
 def plot_shap_bar(lr_shap_df, xgb_shap_df, save_path):
@@ -2226,16 +2080,10 @@ def plot_shap_bar(lr_shap_df, xgb_shap_df, save_path):
         ax.set_title(get_model_display_name(model_name), fontsize=SUBPLOT_TITLE_SIZE, fontweight="bold")
 
     plt.subplots_adjust(left=0.16, right=0.97, top=0.92, bottom=0.06, hspace=0.15)
-    save_figure(plt.gcf(), save_path)
-    plt.close(fig)
-    return save_path
+    return fig
 
 
 def compute_shap_values_for_df(model_name, clf, bg_df, eval_df):
-    """
-    Compute SHAP values on an evaluation set.
-    Uses LinearExplainer for LR_L2 and TreeExplainer for XGB.
-    """
     if model_name == "LR_L2":
         explainer = shap.LinearExplainer(clf, bg_df)
     else:
@@ -2251,9 +2099,6 @@ def compute_shap_values_for_df(model_name, clf, bg_df, eval_df):
 
 
 def infer_direction(x, s):
-    """
-    Check whether higher feature values tend to increase or decrease predictions.
-    """
     x    = np.asarray(x)
     s    = np.asarray(s)
     if len(x) < 2 or np.std(x) == 0 or np.std(s) == 0:
@@ -2271,9 +2116,6 @@ def infer_direction(x, s):
 def get_top_global_shap_genes_for_one_outer_fold(
     X_train, pipe, gene_cols, comb_mask, model_name, fold_seed, gene_name_map, top_k=TOP_K,
 ):
-    """
-    Get the top genes for one outer fold by mean absolute SHAP value.
-    """
     selected_genes = np.array(gene_cols)[comb_mask]
     if len(selected_genes) == 0:
         return pd.DataFrame(columns=["Gene", "Mean |SHAP| (Global)", "Direction"])
@@ -2407,9 +2249,7 @@ def plot_beeswarm(run_store, lr_gene_labels, xgb_gene_labels, save_path):
                     extra_ax.set_ylabel(extra_ax.get_ylabel(), fontsize=20)
 
     plt.tight_layout(rect=[0, 0, 1, 0.95], h_pad=3.0)
-    save_figure(plt.gcf(), save_path, is_beeswarm=True)
-    plt.close(fig)
-    return save_path
+    return fig
 
 
 def plot_correct_oof_genes(lr_df, xgb_df, save_path):
@@ -2491,12 +2331,9 @@ def plot_correct_oof_genes(lr_df, xgb_df, save_path):
     _render_table(axes[0], lr_df,  get_model_display_name("LR_L2"))
     _render_table(axes[1], xgb_df, get_model_display_name("XGB"))
     plt.tight_layout(rect=[0, 0, 1, 0.985], h_pad=2.2)
-    save_figure(plt.gcf(), save_path)
-    plt.close(fig)
-    return save_path
+    return fig
 
 
-# SHAP analysis using correctly predicted inner-validation samples
 def get_top_correct_oof_training_genes_for_one_outer_fold(
     X_train, y_train, g_train, gene_cols, gene_name_map,
     model_name, seed, params, top_k=TOP_K,
@@ -2632,12 +2469,7 @@ def aggregate_top_correct_oof_training_genes_across_outer_folds(run_store, model
     return agg_df
 
 
-# =============================================================================
-# Permutation sanity check (LR_L2 and XGB only)
-# =============================================================================
 def run_permutation_sanity_check_on_outer_test_folds(outer_summaries):
-    """Run a permutation-label sanity check for LR_L2 and XGB across outer folds."""
-
     rows = []
 
     usable_outer_summaries = [
@@ -2735,7 +2567,6 @@ def run_permutation_sanity_check_on_outer_test_folds(outer_summaries):
     return pd.DataFrame(rows)
 
 
-# Notebook display helpers
 def show_final_outputs_in_order(
     search_space_png, best_params_png,
     cm_lr_png, cm_xgb_png,
@@ -2764,7 +2595,6 @@ def show_final_outputs_in_order(
     return ordered_paths
 
 
-# Outer-fold preparation
 def _prepare_outer_folds(outer_cv, X, y, groups, outer_is_stratified, cache_dir):
 
     import pickle
@@ -2805,9 +2635,6 @@ def _prepare_outer_folds(outer_cv, X, y, groups, outer_is_stratified, cache_dir)
     return fold_indices, outer_folds_pkl, fold_meta_json
 
 
-# =============================================================================
-# Outer-fold execution
-# =============================================================================
 def _run_one_outer_split(
     outer_idx, tr_idx, te_idx,
     X, y, groups,
@@ -2974,13 +2801,6 @@ def _run_one_outer_split(
                 get_model_display_name(model_name), outer_idx, e,
             )
 
-    # Evaluate comparator models for this outer split:
-    #   1) prevalence baseline
-    #   2) SLEDAI-only logistic regression
-
-    # -------------------------
-    # Prevalence baseline
-    # -------------------------
     baseline_metrics, _, baseline_probs, _, baseline_prev = evaluate_baseline_on_outer_test(
         y_train=y_train,
         y_test=y_test,
@@ -3023,9 +2843,6 @@ def _run_one_outer_split(
         baseline_metrics["Threshold"],
     )
 
-    # -------------------------
-    # SLEDAI-only comparator
-    # -------------------------
     if X_sledai is not None:
         X_train_sledai = X_sledai.iloc[tr_idx]
         X_test_sledai  = X_sledai.iloc[te_idx]
@@ -3098,9 +2915,6 @@ def _run_one_outer_split(
     return metrics_list, cms_list, params_rows_list, run_store_entries, outer_summary
 
 
-# =============================================================================
-# SHAP outputs (gene-expression models only)
-# =============================================================================
 def _generate_shap_outputs(run_store, gene_name_map, dirs):
 
     gene_model_keys = [(fold_id, model_name) for (fold_id, model_name) in run_store.keys() if model_name in MODEL_NAMES]
@@ -3124,7 +2938,6 @@ def _generate_shap_outputs(run_store, gene_name_map, dirs):
     fold_ids = sorted({fold_id for (fold_id, model_name) in run_store.keys()})
     results  = {}
 
-    # Save SHAP-related CSVs for gene-expression models and generate summary figures.
     for model_name in MODEL_NAMES:
         shap_df = aggregate_global_shap_genes_across_outer_folds(
             run_store=run_store, model_name=model_name, gene_name_map=gene_name_map, top_k=TOP_K,
@@ -3193,9 +3006,6 @@ def _generate_shap_outputs(run_store, gene_name_map, dirs):
     }
 
 
-# =============================================================================
-# Summary output generation
-# =============================================================================
 def _export_summary_outputs(
     metrics_df, run_store, best_model_name, outer_summaries,
     best_params_rows, all_cms, gene_name_map,
@@ -3204,7 +3014,6 @@ def _export_summary_outputs(
     X_shape, dirs, data_filepath, annotation_path,
     sledai_col, best_gene_expression_model_name,
 ):
-    """Save summary tables/figures and display them in order."""
     lr_rows  = [x["row"] for x in best_params_rows if x["model_name"] == "LR_L2"]
     xgb_rows = [x["row"] for x in best_params_rows if x["model_name"] == "XGB"]
 
@@ -3226,7 +3035,6 @@ def _export_summary_outputs(
         plot_df.columns = ["Parameter"] + [f"Fold {int(c)}" for c in plot_df.columns[1:]]
         return plot_df
 
-    # Export best-parameter tables for the tuned gene-expression models.
     best_params_png = os.path.join(dirs["figures"], "02_best_hyperparameters_selected.png")
 
     if lr_best_params_df.empty or xgb_best_params_df.empty:
@@ -3249,7 +3057,6 @@ def _export_summary_outputs(
 
     cm_lr_png  = os.path.join(dirs["figures"], "03a_confusion_matrix_lr_l2.png")
     cm_xgb_png = os.path.join(dirs["figures"], "03b_confusion_matrix_xgb.png")
-    # Export confusion-matrix figures for the gene-expression models.
     lr_cm_exists  = any(k[1] == "LR_L2" for k in all_cms.keys())
     xgb_cm_exists = any(k[1] == "XGB"   for k in all_cms.keys())
 
@@ -3526,19 +3333,7 @@ def _export_summary_outputs(
     }
 
 
-# =============================================================================
-# Main entry point
-# =============================================================================
 def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
-    """
-    Run the full nested cross-validation pipeline and return a results dictionary.
-
-    Outputs are saved under a timestamped run directory:
-        output_dir/run_YYYYMMDD_HHMMSS/figures
-        output_dir/run_YYYYMMDD_HHMMSS/tables
-        output_dir/run_YYYYMMDD_HHMMSS/shap
-        output_dir/run_YYYYMMDD_HHMMSS/logs
-    """
     plt.rcParams.update({
         "font.size":        TICK_LABEL_SIZE,
         "axes.titlesize":   SUBPLOT_TITLE_SIZE,
@@ -3636,7 +3431,6 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
         outer_cv, X, y, groups, outer_is_stratified, cache_dir,
     )
 
-    # Preserve original sample IDs in the fold assignment exports.
     fold_assignment_rows = []
     test_assignment_rows = []
     for outer_idx, (tr_idx, te_idx) in enumerate(fold_indices, start=1):
@@ -3726,7 +3520,6 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
             index=False,
         )
 
-    # Check OOF coverage for models that use inner-fold validation.
     coverage_models = MODEL_NAMES + ["SLEDAI_ONLY"]
 
     low_coverage = metrics_df[
@@ -3746,7 +3539,6 @@ def run_pipeline(data_filepath: str, output_dir: str = OUTPUT_DIR):
             MIN_OOF_COVERAGE_WARN * 100,
         )
 
-    # Track both the best overall model and the best gene-expression model.
     mean_test_pr_auc_all = (
         metrics_df[metrics_df["Model"].isin(ALL_REPORT_MODEL_NAMES)]
         .groupby("Model")["PR-AUC (PRIMARY)"]
@@ -3793,7 +3585,6 @@ def _is_jupyter() -> bool:
         if shell is None:
             return False
         shell_type = type(shell).__name__
-        # Covers standard Jupyter environments, including Colab.
         return shell_type in ("ZMQInteractiveShell", "Shell") or "colab" in str(type(shell)).lower()
     except ImportError:
         return False
