@@ -250,22 +250,19 @@ def make_and_save_figure(fig_path: str | None, plot_func, *args, **kwargs):
     - PDF (vector) for all figures
     - PNG (600 DPI) for SHAP beeswarm (Fig 8)
     """
-    plot_func(*args, **kwargs)
+    fig = plot_func(*args, **kwargs)
 
-    # Get current figure
-    fig = plt.gcf()
+    if fig is None:
+        fig = plt.gcf()
 
     if fig_path is None:
         logger.warning("No fig_path provided.")
         return None
 
-    # Detect beeswarm automatically
     is_beeswarm = "beeswarm" in str(fig_path).lower()
 
-    # Use your unified saving logic
     save_figure(fig, fig_path, is_beeswarm=is_beeswarm)
 
-    # Log final saved file (correct extension)
     base, _ = os.path.splitext(fig_path)
     final_path = base + (".png" if is_beeswarm else ".pdf")
 
@@ -1680,9 +1677,7 @@ def plot_two_tables(
         )
 
     plt.tight_layout(rect=[0, 0, 1, 0.965], pad=0.6, w_pad=1.2)
-    save_figure(plt.gcf(), save_path)
-    plt.close(fig)
-
+    return fig
 
 def plot_confusion_matrices_one_model(all_cms, fold_ids, model_name, save_path):
     fold_ids = sorted([fid for fid in fold_ids if (fid, model_name) in all_cms])
@@ -1755,8 +1750,7 @@ def plot_confusion_matrices_one_model(all_cms, fold_ids, model_name, save_path):
         cbar_ax.axis("off")
 
     plt.subplots_adjust(left=0.08, right=0.89, top=0.90, bottom=0.10, hspace=0.42, wspace=0.30)
-    save_figure(plt.gcf(), save_path)
-    plt.close(fig)
+    return fig
 
 
 def plot_metrics_table(summary_df, save_path):
@@ -1814,6 +1808,7 @@ def plot_metrics_table(summary_df, save_path):
 
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     ax.axis("off")
+    return fig
 
     metric_w = 0.16
     pair_w = (1.0 - metric_w) / max(n_models, 1)
