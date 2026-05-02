@@ -50,17 +50,43 @@ warnings.filterwarnings(
 import numpy as np
 import pandas as pd
 
+import os
 import matplotlib
+
 matplotlib.use("Agg")
 
-# Enforce 300 DPI globally for ALL saved figures
-matplotlib.rcParams["figure.dpi"] = 300
-matplotlib.rcParams["savefig.dpi"] = 300
+# Enforce 600 DPI globally for ALL saved figures
+matplotlib.rcParams["figure.dpi"] = 600
+matplotlib.rcParams["savefig.dpi"] = 600
 
 import matplotlib.pyplot as plt
 
-# Optional: prevent automatic rendering in notebooks/scripts
+# Prevent automatic rendering (cleaner for pipelines)
 plt.ioff()
+
+
+def save_figure(fig, save_path, is_beeswarm=False):
+    """
+    Save figure in publication-ready format.
+
+    - Default: PDF (vector)
+    - SHAP beeswarm: PNG (600 DPI)
+
+    Parameters:
+    - fig: matplotlib figure object (plt.gcf())
+    - save_path: base path or filename (no extension needed)
+    - is_beeswarm: True only for Fig 8
+    """
+    base, _ = os.path.splitext(save_path)
+
+    if is_beeswarm:
+        # Raster image (required for dense SHAP beeswarm)
+        fig.savefig(base + ".png", dpi=600, bbox_inches="tight")
+    else:
+        # Vector format (preferred for plots/tables)
+        fig.savefig(base + ".pdf", bbox_inches="tight")
+
+    plt.close(fig)
 
 import sklearn
 from sklearn.linear_model import LogisticRegression
@@ -219,15 +245,35 @@ def make_cache_dir(base_output_dir: str) -> str:
 
 def make_and_save_figure(fig_path: str | None, plot_func, *args, **kwargs):
     """
-    Call a plotting function that saves its own figure to disk.
-    This wrapper only checks whether the expected output file exists.
-    It does not display figures here.
+    Call a plotting function and enforce standardized saving:
+
+    - PDF (vector) for all figures
+    - PNG (600 DPI) for SHAP beeswarm (Fig 8)
     """
     plot_func(*args, **kwargs)
-    if fig_path is not None and os.path.exists(fig_path):
-        logger.info("Saved figure: %s", fig_path)
-        return fig_path
-    logger.warning("Expected figure was not created: %s", fig_path)
+
+    # Get current figure
+    fig = plt.gcf()
+
+    if fig_path is None:
+        logger.warning("No fig_path provided.")
+        return None
+
+    # Detect beeswarm automatically
+    is_beeswarm = "beeswarm" in str(fig_path).lower()
+
+    # Use your unified saving logic
+    save_figure(fig, fig_path, is_beeswarm=is_beeswarm)
+
+    # Log final saved file (correct extension)
+    base, _ = os.path.splitext(fig_path)
+    final_path = base + (".png" if is_beeswarm else ".pdf")
+
+    if os.path.exists(final_path):
+        logger.info("Saved figure: %s", final_path)
+        return final_path
+
+    logger.warning("Expected figure was not created: %s", final_path)
     return None
 
 
@@ -1634,7 +1680,7 @@ def plot_two_tables(
         )
 
     plt.tight_layout(rect=[0, 0, 1, 0.965], pad=0.6, w_pad=1.2)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    save_figure(plt.gcf(), save_path)
     plt.close(fig)
 
 
@@ -1709,7 +1755,7 @@ def plot_confusion_matrices_one_model(all_cms, fold_ids, model_name, save_path):
         cbar_ax.axis("off")
 
     plt.subplots_adjust(left=0.08, right=0.89, top=0.90, bottom=0.10, hspace=0.42, wspace=0.30)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    save_figure(plt.gcf(), save_path)
     plt.close(fig)
 
 
@@ -1852,7 +1898,7 @@ def plot_metrics_table(summary_df, save_path):
     )
 
     plt.tight_layout(rect=[0, 0, 1, 0.98])
-    fig.savefig(save_path, dpi=300, bbox_inches="tight")
+    save_figure(fig, save_path)
     plt.close(fig)
 
 
@@ -1978,7 +2024,7 @@ def plot_per_fold_metrics(supp_df, save_path):
     for ax, model_name in zip(axes, models):
         _render_table(ax, model_name)
     plt.tight_layout(rect=[0, 0, 1, 0.985], h_pad=0.35)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    save_figure(plt.gcf(), save_path)
     plt.close(fig)
 
 
@@ -2072,7 +2118,7 @@ def plot_permutation_table_top_bottom(perm_df, save_path):
             ax.set_title(get_model_display_name(model_name), fontsize=34, fontweight="bold", pad=12)
 
     plt.tight_layout(rect=[0, 0, 1, 0.965], h_pad=2.8)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    save_figure(plt.gcf(), save_path)
     plt.close(fig)
 
 
@@ -2149,7 +2195,7 @@ def plot_pr_auc_curves(run_store, fold_ids, save_path):
     )
 
     plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    save_figure(plt.gcf(), save_path)
     plt.close(fig)
     return save_path
 
@@ -2185,7 +2231,7 @@ def plot_shap_bar(lr_shap_df, xgb_shap_df, save_path):
         ax.set_title(get_model_display_name(model_name), fontsize=SUBPLOT_TITLE_SIZE, fontweight="bold")
 
     plt.subplots_adjust(left=0.16, right=0.97, top=0.92, bottom=0.06, hspace=0.15)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    save_figure(plt.gcf(), save_path)
     plt.close(fig)
     return save_path
 
@@ -2366,7 +2412,7 @@ def plot_beeswarm(run_store, lr_gene_labels, xgb_gene_labels, save_path):
                     extra_ax.set_ylabel(extra_ax.get_ylabel(), fontsize=20)
 
     plt.tight_layout(rect=[0, 0, 1, 0.95], h_pad=3.0)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    save_figure(plt.gcf(), save_path, is_beeswarm=True)
     plt.close(fig)
     return save_path
 
@@ -2450,7 +2496,7 @@ def plot_correct_oof_genes(lr_df, xgb_df, save_path):
     _render_table(axes[0], lr_df,  get_model_display_name("LR_L2"))
     _render_table(axes[1], xgb_df, get_model_display_name("XGB"))
     plt.tight_layout(rect=[0, 0, 1, 0.985], h_pad=2.2)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    save_figure(plt.gcf(), save_path)
     plt.close(fig)
     return save_path
 
